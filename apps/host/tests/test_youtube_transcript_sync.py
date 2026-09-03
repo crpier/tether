@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from snekok.result import Err, Ok
 from snekok.validation import validate_python_unsafe
-from snekql.sqlite import Config, Database, insert, select
+from snekql.sqlite import Config, Database, insert
 from snektest import (
     assert_eq,
     assert_false,
@@ -18,7 +18,15 @@ from snektest import (
     test,
 )
 
+from tests.youtube_fixtures import create_youtube_transcript_test_schema
 from tether.structured_logging import Logger
+from tether.transcripts import (
+    TranscriptionAvailable,
+    TranscriptionRetrying,
+    TranscriptionReviewNeeded,
+    TranscriptionState,
+    TranscriptionStore,
+)
 from tether.transcripts.acquisition import (
     TranscriptAcquisitionConfig,
     TranscriptAcquisitionService,
@@ -31,19 +39,12 @@ from tether.transcripts.contracts import (
     TranscriptTransientFailure,
     TranscriptUnavailableFailure,
 )
-from tether.transcripts.worker import (
+from tether.youtube.store import IngestedVideo
+from tether.youtube.transcript_sync import (
     TranscriptSyncConfig,
     TranscriptSyncService,
 )
-from tether.youtube.store import (
-    IngestedVideo,
-    TranscriptAvailable,
-    TranscriptRetrying,
-    TranscriptReviewNeeded,
-    TranscriptState,
-    create_youtube_schema,
-    fetch_transcript_state,
-)
+from tether.youtube.transcription import youtube_transcription_target
 from tether.youtube.types import VideoId
 
 
@@ -96,7 +97,7 @@ async def worker_env(
     sync_config: TranscriptSyncConfig | None = None,
 ) -> AsyncGenerator[WorkerEnv]:
     database = await Database.initialize(backend=Config(database=":memory:"))
-    await create_youtube_schema(database)
+    await create_youtube_transcript_test_schema(database)
     clock = FakeClock(datetime(2026, 6, 1, 12, 0, tzinfo=UTC))
     source = ScriptedSource(outcomes)
     acquisition = TranscriptAcquisitionService(
@@ -140,33 +141,13 @@ async def _seed(
         )
 
 
-async def _mark_legacy_timed(database: Database, video_id: str) -> None:
-    """Give a saved video the pre-duration timed transcript representation."""
-    async with database.transaction(mode="immediate") as transaction:
-        connection = transaction.require_connection()
-        cursor = await connection.execute(
-            'UPDATE "ingested_video" SET "transcript" = ?, '
-            '"transcript_segments_json" = ? WHERE "video_id" = ?',
-            (
-                "old joined text",
-                '[{"start_seconds":0.0,"text":"old segment"}]',
-                video_id,
-            ),
-        )
-        await cursor.close()
-
-
 async def _state(
     database: Database,
     video_id: str,
-) -> TranscriptState | None:
-    async with database.transaction() as tx:
-        video = await tx.fetch_one_or_none(
-            select(IngestedVideo).where(IngestedVideo.video_id.eq(VideoId(video_id)))
-        )
-        if video is None:
-            return None
-        return await fetch_transcript_state(tx, video.id)
+) -> TranscriptionState | None:
+    return await TranscriptionStore(database).read(
+        youtube_transcription_target(VideoId(video_id)).key
+    )
 
 
 @test()
@@ -189,8 +170,10 @@ async def successful_pass_stores_transcript() -> None:
     report = await env.worker.sync(logger=_logger())
 
     assert_eq(report.fetched, 1)
-    state = assert_isinstance(await _state(env.database, "video"), TranscriptAvailable)
-    assert_eq(state.text, "hello")
+    state = assert_isinstance(
+        await _state(env.database, "video"), TranscriptionAvailable
+    )
+    assert_eq(state.transcript.text, "hello")
 
 
 @test()
@@ -214,16 +197,15 @@ async def legacy_timed_backfill_replaces_upstream_segmentation_exactly() -> None
         )
     )
     await _seed(env.database, "legacy-timed")
-    await _mark_legacy_timed(env.database, "legacy-timed")
 
     report = await env.worker.sync(logger=_logger())
 
     assert_eq(report.fetched, 1)
     state = assert_isinstance(
-        await _state(env.database, "legacy-timed"), TranscriptAvailable
+        await _state(env.database, "legacy-timed"), TranscriptionAvailable
     )
-    assert_eq(state.text, "current joined text")
-    assert_eq(state.segments, (replacement,))
+    assert_eq(state.transcript.text, "current joined text")
+    assert_eq(state.transcript.segments, (replacement,))
 
 
 @test()
@@ -249,7 +231,6 @@ async def legacy_timed_backfill_resumes_after_a_bounded_pass() -> None:
     )
     for video_id in ("legacy-one", "legacy-two"):
         await _seed(env.database, video_id)
-        await _mark_legacy_timed(env.database, video_id)
 
     first = await env.worker.sync(logger=_logger())
     second = await env.worker.sync(logger=_logger())
@@ -258,24 +239,23 @@ async def legacy_timed_backfill_resumes_after_a_bounded_pass() -> None:
     assert_true(first.deferred)
     assert_eq(second.fetched, 1)
     assert_eq(len(env.source.calls), 2)
-    assert_isinstance(await _state(env.database, "legacy-one"), TranscriptAvailable)
-    assert_isinstance(await _state(env.database, "legacy-two"), TranscriptAvailable)
+    assert_isinstance(await _state(env.database, "legacy-one"), TranscriptionAvailable)
+    assert_isinstance(await _state(env.database, "legacy-two"), TranscriptionAvailable)
 
 
 @test()
 async def unavailable_legacy_timed_backfill_waits_for_human_review() -> None:
     """A candidate that cannot be refetched remains explicitly inspectable."""
     env = await load_fixture(
-        worker_env([Err(TranscriptUnavailableFailure(video_id="legacy-timed"))])
+        worker_env([Err(TranscriptUnavailableFailure(locator="legacy-timed"))])
     )
     await _seed(env.database, "legacy-timed")
-    await _mark_legacy_timed(env.database, "legacy-timed")
 
     report = await env.worker.sync(logger=_logger())
 
     assert_eq(report.needs_review, 1)
     assert_isinstance(
-        await _state(env.database, "legacy-timed"), TranscriptReviewNeeded
+        await _state(env.database, "legacy-timed"), TranscriptionReviewNeeded
     )
 
 
@@ -283,7 +263,7 @@ async def unavailable_legacy_timed_backfill_waits_for_human_review() -> None:
 async def unavailable_transcript_waits_for_human_review() -> None:
     """Permanent source absence leaves no automatic retry deadline."""
     env = await load_fixture(
-        worker_env([Err(TranscriptUnavailableFailure(video_id="video"))])
+        worker_env([Err(TranscriptUnavailableFailure(locator="video"))])
     )
     await _seed(env.database, "video")
 
@@ -291,13 +271,13 @@ async def unavailable_transcript_waits_for_human_review() -> None:
     state = await _state(env.database, "video")
 
     assert_eq(report.needs_review, 1)
-    state = assert_isinstance(state, TranscriptReviewNeeded)
+    state = assert_isinstance(state, TranscriptionReviewNeeded)
     assert_eq(state.status, "needs_review")
 
 
 @test()
 async def transient_failure_persists_typed_retry_deadline() -> None:
-    """Per-video retry state uses a UTC datetime rather than encoded text."""
+    """A target retry uses a UTC datetime rather than encoded text."""
     env = await load_fixture(
         worker_env(
             [Err(TranscriptTransientFailure(message="network"))],
@@ -313,7 +293,7 @@ async def transient_failure_persists_typed_retry_deadline() -> None:
     state = await _state(env.database, "video")
 
     assert_eq(report.retried, 1)
-    state = assert_isinstance(state, TranscriptRetrying)
+    state = assert_isinstance(state, TranscriptionRetrying)
     assert_eq(
         state.next_attempt_at,
         env.clock.now() + timedelta(minutes=10),
@@ -348,7 +328,13 @@ async def worker_processes_newest_likes_first() -> None:
 
     _ = await env.worker.sync(logger=_logger())
 
-    assert_eq(env.source.calls, ["new", "old"])
+    assert_eq(
+        env.source.calls,
+        [
+            "https://www.youtube.com/watch?v=new",
+            "https://www.youtube.com/watch?v=old",
+        ],
+    )
 
 
 @test()

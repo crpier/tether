@@ -1688,46 +1688,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/youtube/{video_id}/ignore": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Ignore Youtube Video
-     * @description Purge a video from ingestion.
-     */
-    post: operations["ignore_youtube_video_api_youtube__video_id__ignore_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/youtube/{video_id}/retry": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /**
-     * Retry Youtube Video
-     * @description Un-ignore a previously purged video.
-     */
-    post: operations["retry_youtube_video_api_youtube__video_id__retry_post"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   "/api/youtube/{video_id}/transcript": {
     parameters: {
       query?: never;
@@ -4693,7 +4653,7 @@ export interface components {
      * @description The transcript status after a human decision.
      */
     TranscriptDecisionOutcomeRead: {
-      transcript_status: components["schemas"]["TranscriptStatus"];
+      transcript_status: components["schemas"]["TranscriptionStatus"];
       /** Video Id */
       video_id: string;
     };
@@ -4711,7 +4671,7 @@ export interface components {
       /** Title */
       title: string;
       /** @default needs_review */
-      transcript_status: components["schemas"]["TranscriptStatus"];
+      transcript_status: components["schemas"]["TranscriptionStatus"];
       /** Video Id */
       video_id: string;
     };
@@ -4728,9 +4688,6 @@ export interface components {
       /** Source */
       source: string;
     };
-    /** @enum {string} */
-    TranscriptStatus:
-      "pending" | "retrying" | "needs_review" | "available" | "unavailable";
     /**
      * TranscriptionResponse
      * @description The recognized transcript text for one uploaded audio clip.
@@ -4742,6 +4699,9 @@ export interface components {
       /** Transcript */
       transcript: string;
     };
+    /** @enum {string} */
+    TranscriptionStatus:
+      "pending" | "retrying" | "needs_review" | "available" | "unavailable";
     /**
      * TriageReport
      * @description The full Triage view of the active Bucket list at one point in time.
@@ -4954,21 +4914,7 @@ export interface components {
     YouTubeSource: "liked";
     /**
      * YouTubeSyncStatusRead
-     * @description HTTP snapshot of the background ingestion's progress and health.
-     *
-     *     >>> read = YouTubeSyncStatusRead(
-     *     ...     videos_total=3,
-     *     ...     transcripts_done=1,
-     *     ...     transcripts_pending=1,
-     *     ...     transcripts_needs_review=0,
-     *     ...     transcripts_unavailable=1,
-     *     ...     last_synced_at=None,
-     *     ...     quota=QuotaMeta(limit=10, used=0, remaining=10),
-     *     ...     api_paused_until=None,
-     *     ...     transcript_providers_paused=[],
-     *     ... )
-     *     >>> read.videos_total
-     *     3
+     * @description HTTP snapshot keeping YouTube and Transcription state distinct.
      */
     YouTubeSyncStatusRead: {
       /** Api Paused Until */
@@ -4976,29 +4922,34 @@ export interface components {
       /** Last Synced At */
       last_synced_at: string | null;
       quota: components["schemas"]["QuotaMeta"];
-      /** Transcript Providers Paused */
-      transcript_providers_paused: components["schemas"]["TranscriptProviderPauseRead"][];
-      /** Transcripts Done */
-      transcripts_done: number;
-      /** Transcripts Needs Review */
-      transcripts_needs_review: number;
-      /** Transcripts Pending */
-      transcripts_pending: number;
-      /** Transcripts Unavailable */
-      transcripts_unavailable: number;
+      transcriptions: components["schemas"]["YouTubeTranscriptionStatusRead"];
       /** Videos Total */
       videos_total: number;
     };
     /**
      * YouTubeTranscriptResponse
-     * @description A fetched transcript: the updated video, its text, and quota + cache.
+     * @description Transcript text fetched through a YouTube media association.
      */
     YouTubeTranscriptResponse: {
       cache: components["schemas"]["CacheMeta"];
-      quota: components["schemas"]["QuotaMeta"];
       /** Transcript */
       transcript: string;
-      video: components["schemas"]["YouTubeVideoRead"];
+    };
+    /**
+     * YouTubeTranscriptionStatusRead
+     * @description Transcription progress for the associated YouTube corpus.
+     */
+    YouTubeTranscriptionStatusRead: {
+      /** Done */
+      done: number;
+      /** Needs Review */
+      needs_review: number;
+      /** Pending */
+      pending: number;
+      /** Providers Paused */
+      providers_paused: components["schemas"]["TranscriptProviderPauseRead"][];
+      /** Unavailable */
+      unavailable: number;
     };
     /**
      * YouTubeVideoListResponse
@@ -5023,8 +4974,6 @@ export interface components {
      *     ...     channel="PyConf",
      *     ...     topic="python",
      *     ...     description="",
-     *     ...     transcript=None,
-     *     ...     transcript_status="pending",
      *     ...     created_at=datetime(2026, 1, 1),
      *     ...     updated_at=datetime(2026, 1, 1),
      *     ...     ignored_at=None,
@@ -5061,9 +5010,6 @@ export interface components {
       title: string;
       /** Topic */
       topic: string;
-      /** Transcript */
-      transcript: string | null;
-      transcript_status: components["schemas"]["TranscriptStatus"];
       /**
        * Updated At
        * Format: date-time
@@ -7839,68 +7785,6 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["TranscriptDecisionListResponse"];
-        };
-      };
-    };
-  };
-  ignore_youtube_video_api_youtube__video_id__ignore_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        video_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["YouTubeVideoRead"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  retry_youtube_video_api_youtube__video_id__retry_post: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        video_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["YouTubeVideoRead"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

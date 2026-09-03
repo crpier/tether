@@ -6873,7 +6873,7 @@
         "description": "The transcript status after a human decision.",
         "properties": {
           "transcript_status": {
-            "$ref": "#/components/schemas/TranscriptStatus"
+            "$ref": "#/components/schemas/TranscriptionStatus"
           },
           "video_id": {
             "title": "Video Id",
@@ -6914,7 +6914,7 @@
             "type": "string"
           },
           "transcript_status": {
-            "$ref": "#/components/schemas/TranscriptStatus",
+            "$ref": "#/components/schemas/TranscriptionStatus",
             "default": "needs_review"
           },
           "video_id": {
@@ -6952,16 +6952,6 @@
         "title": "TranscriptProviderPauseRead",
         "type": "object"
       },
-      "TranscriptStatus": {
-        "enum": [
-          "pending",
-          "retrying",
-          "needs_review",
-          "available",
-          "unavailable"
-        ],
-        "type": "string"
-      },
       "TranscriptionResponse": {
         "description": "The recognized transcript text for one uploaded audio clip.\n\n>>> TranscriptionResponse(transcript=\"buy oat milk\").transcript\n'buy oat milk'",
         "properties": {
@@ -6975,6 +6965,16 @@
         ],
         "title": "TranscriptionResponse",
         "type": "object"
+      },
+      "TranscriptionStatus": {
+        "enum": [
+          "pending",
+          "retrying",
+          "needs_review",
+          "available",
+          "unavailable"
+        ],
+        "type": "string"
       },
       "TriageReport": {
         "description": "The full Triage view of the active Bucket list at one point in time.",
@@ -7560,7 +7560,7 @@
         "type": "string"
       },
       "YouTubeSyncStatusRead": {
-        "description": "HTTP snapshot of the background ingestion's progress and health.\n\n>>> read = YouTubeSyncStatusRead(\n...     videos_total=3,\n...     transcripts_done=1,\n...     transcripts_pending=1,\n...     transcripts_needs_review=0,\n...     transcripts_unavailable=1,\n...     last_synced_at=None,\n...     quota=QuotaMeta(limit=10, used=0, remaining=10),\n...     api_paused_until=None,\n...     transcript_providers_paused=[],\n... )\n>>> read.videos_total\n3",
+        "description": "HTTP snapshot keeping YouTube and Transcription state distinct.",
         "properties": {
           "api_paused_until": {
             "anyOf": [
@@ -7589,28 +7589,8 @@
           "quota": {
             "$ref": "#/components/schemas/QuotaMeta"
           },
-          "transcript_providers_paused": {
-            "items": {
-              "$ref": "#/components/schemas/TranscriptProviderPauseRead"
-            },
-            "title": "Transcript Providers Paused",
-            "type": "array"
-          },
-          "transcripts_done": {
-            "title": "Transcripts Done",
-            "type": "integer"
-          },
-          "transcripts_needs_review": {
-            "title": "Transcripts Needs Review",
-            "type": "integer"
-          },
-          "transcripts_pending": {
-            "title": "Transcripts Pending",
-            "type": "integer"
-          },
-          "transcripts_unavailable": {
-            "title": "Transcripts Unavailable",
-            "type": "integer"
+          "transcriptions": {
+            "$ref": "#/components/schemas/YouTubeTranscriptionStatusRead"
           },
           "videos_total": {
             "title": "Videos Total",
@@ -7619,42 +7599,67 @@
         },
         "required": [
           "videos_total",
-          "transcripts_done",
-          "transcripts_pending",
-          "transcripts_needs_review",
-          "transcripts_unavailable",
           "last_synced_at",
           "quota",
           "api_paused_until",
-          "transcript_providers_paused"
+          "transcriptions"
         ],
         "title": "YouTubeSyncStatusRead",
         "type": "object"
       },
       "YouTubeTranscriptResponse": {
-        "description": "A fetched transcript: the updated video, its text, and quota + cache.",
+        "description": "Transcript text fetched through a YouTube media association.",
         "properties": {
           "cache": {
             "$ref": "#/components/schemas/CacheMeta"
           },
-          "quota": {
-            "$ref": "#/components/schemas/QuotaMeta"
-          },
           "transcript": {
             "title": "Transcript",
             "type": "string"
-          },
-          "video": {
-            "$ref": "#/components/schemas/YouTubeVideoRead"
           }
         },
         "required": [
-          "video",
           "transcript",
-          "quota",
           "cache"
         ],
         "title": "YouTubeTranscriptResponse",
+        "type": "object"
+      },
+      "YouTubeTranscriptionStatusRead": {
+        "description": "Transcription progress for the associated YouTube corpus.",
+        "properties": {
+          "done": {
+            "title": "Done",
+            "type": "integer"
+          },
+          "needs_review": {
+            "title": "Needs Review",
+            "type": "integer"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "integer"
+          },
+          "providers_paused": {
+            "items": {
+              "$ref": "#/components/schemas/TranscriptProviderPauseRead"
+            },
+            "title": "Providers Paused",
+            "type": "array"
+          },
+          "unavailable": {
+            "title": "Unavailable",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "done",
+          "pending",
+          "needs_review",
+          "unavailable",
+          "providers_paused"
+        ],
+        "title": "YouTubeTranscriptionStatusRead",
         "type": "object"
       },
       "YouTubeVideoListResponse": {
@@ -7683,7 +7688,7 @@
         "type": "object"
       },
       "YouTubeVideoRead": {
-        "description": "HTTP representation of an ingested video, exposing its derived state.\n\n>>> read = YouTubeVideoRead(\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     video_id=\"v1\",\n...     source=\"liked\",\n...     state=\"active\",\n...     title=\"Talk\",\n...     channel=\"PyConf\",\n...     topic=\"python\",\n...     description=\"\",\n...     transcript=None,\n...     transcript_status=\"pending\",\n...     created_at=datetime(2026, 1, 1),\n...     updated_at=datetime(2026, 1, 1),\n...     ignored_at=None,\n...     liked_at=None,\n...     duration_seconds=None,\n... )\n>>> read.state\n'active'",
+        "description": "HTTP representation of an ingested video, exposing its derived state.\n\n>>> read = YouTubeVideoRead(\n...     id=\"018f0000-0000-7000-8000-000000000000\",\n...     video_id=\"v1\",\n...     source=\"liked\",\n...     state=\"active\",\n...     title=\"Talk\",\n...     channel=\"PyConf\",\n...     topic=\"python\",\n...     description=\"\",\n...     created_at=datetime(2026, 1, 1),\n...     updated_at=datetime(2026, 1, 1),\n...     ignored_at=None,\n...     liked_at=None,\n...     duration_seconds=None,\n... )\n>>> read.state\n'active'",
         "properties": {
           "channel": {
             "title": "Channel",
@@ -7752,20 +7757,6 @@
             "title": "Topic",
             "type": "string"
           },
-          "transcript": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Transcript"
-          },
-          "transcript_status": {
-            "$ref": "#/components/schemas/TranscriptStatus"
-          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -7785,8 +7776,6 @@
           "channel",
           "topic",
           "description",
-          "transcript",
-          "transcript_status",
           "created_at",
           "updated_at",
           "ignored_at",
@@ -11372,86 +11361,6 @@
           }
         },
         "summary": "Transcript Decisions"
-      }
-    },
-    "/api/youtube/{video_id}/ignore": {
-      "post": {
-        "description": "Purge a video from ingestion.",
-        "operationId": "ignore_youtube_video_api_youtube__video_id__ignore_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "video_id",
-            "required": true,
-            "schema": {
-              "title": "Video Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/YouTubeVideoRead"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Ignore Youtube Video"
-      }
-    },
-    "/api/youtube/{video_id}/retry": {
-      "post": {
-        "description": "Un-ignore a previously purged video.",
-        "operationId": "retry_youtube_video_api_youtube__video_id__retry_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "video_id",
-            "required": true,
-            "schema": {
-              "title": "Video Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/YouTubeVideoRead"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Retry Youtube Video"
       }
     },
     "/api/youtube/{video_id}/transcript": {

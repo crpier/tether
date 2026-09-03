@@ -63,14 +63,6 @@ import {
   registerFetchYoutubeTranscriptTool,
   fetch_youtube_transcriptTool,
 } from "./fetch_youtube_transcript.js";
-import {
-  registerIgnoreYoutubeVideoTool,
-  ignore_youtube_videoTool,
-} from "./ignore_youtube_video.js";
-import {
-  registerRetryYoutubeVideoTool,
-  retry_youtube_videoTool,
-} from "./retry_youtube_video.js";
 import { registerWebSearchTool, web_searchTool } from "./web_search.js";
 import {
   registerArchiveGmailMessageTool,
@@ -235,8 +227,6 @@ export const tetherToolSources = [
   sourceForTool(search_youtubeTool),
   sourceForTool(summarize_youtube_activityTool),
   sourceForTool(fetch_youtube_transcriptTool),
-  sourceForTool(ignore_youtube_videoTool),
-  sourceForTool(retry_youtube_videoTool),
   sourceForTool(web_searchTool),
   sourceForTool(archive_gmail_messageTool),
   sourceForTool(search_gmailTool),
@@ -303,8 +293,6 @@ export default function tetherToolsExtension(pi: ExtensionAPI): void {
   registerSearchYoutubeTool(pi);
   registerSummarizeYoutubeActivityTool(pi);
   registerFetchYoutubeTranscriptTool(pi);
-  registerIgnoreYoutubeVideoTool(pi);
-  registerRetryYoutubeVideoTool(pi);
   registerWebSearchTool(pi);
   registerArchiveGmailMessageTool(pi);
   registerSearchGmailTool(pi);

@@ -13,6 +13,11 @@ from snekql.sqlite import Database, DoUpdate, Transaction, insert, select
 
 from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.structured_logging import Logger
+from tether.transcripts import (
+    TranscriptionReviewNeeded,
+    TranscriptionStore,
+    TranscriptionUnavailable,
+)
 from tether.youtube.quota import (
     RawYouTubeVideo,
     YouTubeApiClient,
@@ -22,6 +27,7 @@ from tether.youtube.quota import (
     state_set,
 )
 from tether.youtube.store import IngestedVideo, upsert_ingested_video
+from tether.youtube.transcription import youtube_transcription_target
 
 
 def _debug(logger: Logger, event: str, **context: object) -> None:
@@ -175,6 +181,7 @@ class YouTubeSyncService:
         self.rewalk_interval: timedelta | None = resolved.rewalk_interval
         self.drift_alarm_margin: int = max(0, resolved.drift_alarm_margin)
         self.event_publisher: EventPublisher = event_publisher or NullEventPublisher()
+        self.transcriptions: TranscriptionStore = TranscriptionStore(database)
 
     async def maybe_sync(self, *, logger: Logger) -> SyncReport | None:
         """Run a sync pass only if the gate window has elapsed since the last run.
@@ -346,8 +353,9 @@ class YouTubeSyncService:
             [raw.video_id for raw in videos]
         )
 
-        async def _mirror(tx: Transaction) -> int:
+        async def _mirror(tx: Transaction) -> tuple[int, list[str]]:
             upserted = 0
+            restarted_transcriptions: list[str] = []
             skipped: set[str] = set()
             ingested: set[str] = set()
             for raw in videos:
@@ -361,15 +369,22 @@ class YouTubeSyncService:
                     # Only the liked-page item knows when the user liked the
                     # video; the detail fetch has no playlist context.
                     enriched = enriched.model_copy(update={"liked_at": raw.liked_at})
-                await self._upsert(tx, enriched)
+                if await self._upsert(tx, enriched):
+                    restarted_transcriptions.append(str(enriched.video_id))
                 # A previously-skipped video that now ingests self-corrects the set.
                 ingested.add(raw.video_id)
                 upserted += 1
             await self._update_known_skipped(tx, add=skipped, remove=ingested)
-            return upserted
+            return upserted, restarted_transcriptions
 
         async with self.database.transaction(mode="immediate") as tx:
-            return await _mirror(tx)
+            upserted, restarted_transcriptions = await _mirror(tx)
+        for video_id in restarted_transcriptions:
+            key = youtube_transcription_target(video_id).key
+            state = await self.transcriptions.read(key)
+            if isinstance(state, TranscriptionReviewNeeded | TranscriptionUnavailable):
+                await self.transcriptions.restart(key)
+        return upserted
 
     async def _update_known_skipped(
         self, tx: Transaction, *, add: set[str], remove: set[str]
@@ -399,8 +414,8 @@ class YouTubeSyncService:
             )
         )
 
-    async def _upsert(self, tx: Transaction, raw: RawYouTubeVideo) -> None:
-        await upsert_ingested_video(tx, raw)
+    async def _upsert(self, tx: Transaction, raw: RawYouTubeVideo) -> bool:
+        return await upsert_ingested_video(tx, raw)
 
     def _resolve_backfill(
         self,

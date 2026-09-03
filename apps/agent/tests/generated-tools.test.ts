@@ -47,8 +47,6 @@ describe("generated tool extension", () => {
       "search_youtube",
       "summarize_youtube_activity",
       "fetch_youtube_transcript",
-      "ignore_youtube_video",
-      "retry_youtube_video",
       "web_search",
       "archive_gmail_message",
       "search_gmail",
@@ -93,7 +91,7 @@ describe("generated tool extension", () => {
       "list_ledger_proposals",
       "execute_tools",
     ]);
-    expect(tetherToolSources).toHaveLength(65);
+    expect(tetherToolSources).toHaveLength(63);
   });
 
   test("makes every generated schema discoverable by confined code", async () => {

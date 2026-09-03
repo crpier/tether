@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime, timedelta
-from functools import partial
 
-from snekql.sqlite import Database, select
+from snekql.sqlite import Database
 
 from tether.escalating_pause import (
     PauseKeys,
@@ -15,7 +14,7 @@ from tether.escalating_pause import (
     TrippedPause,
     load_pause_state,
 )
-from tether.youtube import YouTubeSyncState, state_get, state_set
+from tether.transcripts.store import TranscriptionSettings
 
 _TRANSCRIPT_PAUSED_UNTIL_PREFIX = "transcript_provider_paused_until:"
 _TRANSCRIPT_BLOCK_STREAK_PREFIX = "transcript_provider_block_streak:"
@@ -31,24 +30,16 @@ def provider_pause_keys(source: str) -> PauseKeys:
 
 async def load_all_provider_pauses(database: Database) -> dict[str, PauseState]:
     """Load every source with persisted provider-health state."""
-    async with database.transaction() as tx:
-        until_rows = await tx.fetch_all(
-            select(YouTubeSyncState).where(
-                YouTubeSyncState.key.like(f"{_TRANSCRIPT_PAUSED_UNTIL_PREFIX}%")
-            )
-        )
-        streak_rows = await tx.fetch_all(
-            select(YouTubeSyncState).where(
-                YouTubeSyncState.key.like(f"{_TRANSCRIPT_BLOCK_STREAK_PREFIX}%")
-            )
-        )
+    settings = TranscriptionSettings(database)
+    until_keys = await settings.keys(_TRANSCRIPT_PAUSED_UNTIL_PREFIX)
+    streak_keys = await settings.keys(_TRANSCRIPT_BLOCK_STREAK_PREFIX)
     sources = {
-        row.key.removeprefix(_TRANSCRIPT_PAUSED_UNTIL_PREFIX) for row in until_rows
-    } | {row.key.removeprefix(_TRANSCRIPT_BLOCK_STREAK_PREFIX) for row in streak_rows}
+        key.removeprefix(_TRANSCRIPT_PAUSED_UNTIL_PREFIX) for key in until_keys
+    } | {key.removeprefix(_TRANSCRIPT_BLOCK_STREAK_PREFIX) for key in streak_keys}
     pauses: dict[str, PauseState] = {}
     for source in sources:
         pauses[source] = await load_pause_state(
-            partial(state_get, database), keys=provider_pause_keys(source)
+            settings.read, keys=provider_pause_keys(source)
         )
     return pauses
 
@@ -88,10 +79,11 @@ class TranscriptProviderHealth:
                 await self._pause(source).clear()
 
     def _pause(self, source: str) -> PersistentEscalatingPause:
+        settings = TranscriptionSettings(self.database)
         return PersistentEscalatingPause(
             base=self.base,
             cap=self.cap,
             keys=provider_pause_keys(source),
-            read_value=partial(state_get, self.database),
-            write_value=partial(state_set, self.database),
+            read_value=settings.read,
+            write_value=settings.write,
         )

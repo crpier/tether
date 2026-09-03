@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Protocol, runtime_checkable
+from typing import NewType, Protocol, runtime_checkable
 
 from snekok.result import Err, Ok, Result
 from snekok.types import (
@@ -13,6 +13,17 @@ from snekok.types import (
     NonNegativeInt,
     StrictFrozenModel,
 )
+
+TranscriptionKey = NewType("TranscriptionKey", str)
+"""Stable source-independent identity of one Transcription."""
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptionTarget:
+    """Stable Transcription identity plus the locator understood by providers."""
+
+    key: TranscriptionKey
+    locator: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +59,7 @@ class TranscriptDeferredFailure:
 
 @dataclass(frozen=True, slots=True)
 class TranscriptTransientFailure:
-    """A retryable per-video source failure."""
+    """A retryable failure for one Transcription target."""
 
     message: str
 
@@ -58,12 +69,12 @@ class TranscriptTransientFailure:
 
 @dataclass(frozen=True, slots=True)
 class TranscriptUnavailableFailure:
-    """Every attempted source lacked a usable transcript for one video."""
+    """Every attempted source lacked a usable Transcript for one target."""
 
-    video_id: str
+    locator: str
 
     def __str__(self) -> str:
-        return self.video_id
+        return self.locator
 
 
 type TranscriptFailure = (
@@ -83,8 +94,8 @@ class TranscriptSource(Protocol):
         """Stable source identity used for provenance and provider pauses."""
         ...
 
-    async def fetch(self, video_id: str) -> TranscriptFetchResult:
-        """Fetch one transcript or return an expected source failure."""
+    async def fetch(self, locator: str, /) -> TranscriptFetchResult:
+        """Fetch one Transcript or return an expected source failure."""
         ...
 
 
@@ -149,7 +160,7 @@ class TranscriptProviderChain:
 
     async def fetch(
         self,
-        video_id: str,
+        locator: str,
         *,
         policy: TranscriptFetchPolicy | None = None,
     ) -> TranscriptFetchResult:
@@ -167,7 +178,7 @@ class TranscriptProviderChain:
                 deferred = True
                 continue
             selected_policy.record_attempt(source.source)
-            outcome = await source.fetch(video_id)
+            outcome = await source.fetch(locator)
             if isinstance(outcome, Ok):
                 return outcome
             failure = outcome.unwrap_error()
@@ -178,10 +189,10 @@ class TranscriptProviderChain:
         if deferred:
             return Err(
                 TranscriptDeferredFailure(
-                    message=f"transcript acquisition deferred for {video_id}"
+                    message=f"transcript acquisition deferred for {locator}"
                 )
             )
-        return Err(last_unavailable or TranscriptUnavailableFailure(video_id=video_id))
+        return Err(last_unavailable or TranscriptUnavailableFailure(locator=locator))
 
     async def aclose(self) -> None:
         """Close resources owned by configured sources."""
@@ -203,12 +214,12 @@ class TranscriptStored:
 class TranscriptNeedsReview:
     """Every eligible source reported permanent unavailability."""
 
-    video_id: str
+    target: TranscriptionTarget
 
 
 @dataclass(frozen=True, slots=True)
 class TranscriptRetryScheduled:
-    """A transient failure scheduled another per-video attempt."""
+    """A transient failure scheduled another attempt for the target."""
 
     next_attempt_at: datetime
 
@@ -225,7 +236,7 @@ class TranscriptProviderBlocked:
 class TranscriptAcquisitionDeferred:
     """Local or persisted policy deferred acquisition to a later pass."""
 
-    video_id: str
+    target: TranscriptionTarget
 
 
 type TranscriptAcquisitionOutcome = (
@@ -239,9 +250,9 @@ type TranscriptAcquisitionOutcome = (
 
 @dataclass(frozen=True, slots=True)
 class TranscriptExplicitlyUnavailable:
-    """The human has settled transcript absence for one video."""
+    """The human has settled transcript absence for one Transcription."""
 
-    video_id: str
+    target: TranscriptionTarget
 
 
 type TranscriptRequestFailure = (
@@ -258,7 +269,7 @@ class TranscriptAcquisitionPort(Protocol):
 
     async def acquire(
         self,
-        video_id: str,
+        target: TranscriptionTarget,
         *,
         now: datetime,
         policy: TranscriptFetchPolicy | None = None,

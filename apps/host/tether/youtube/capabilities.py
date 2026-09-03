@@ -19,9 +19,8 @@ from snekok.result import Err, Ok
 from snekql.sqlite import Fetched
 from starlette.requests import Request
 
-from tether.capability_contracts import CapabilityOutcome, ErrorRule
-from tether.structured_logging import get_request_logger
-from tether.transcripts.contracts import (
+from tether.capability_contracts import ErrorRule
+from tether.transcripts import (
     TranscriptAcquisitionDeferred,
     TranscriptExplicitlyUnavailable,
     TranscriptNeedsReview,
@@ -32,21 +31,22 @@ from tether.youtube.quota import YouTubeQuotaExceededError
 from tether.youtube.service import (
     EmptyYouTubeSearchQueryError,
     InvalidYouTubeActivityRangeError,
+    YouTubeService,
+)
+from tether.youtube.store import (
+    IngestedVideo,
+    IngestState,
+    YouTubeSource,
+    derive_ingest_state,
+)
+from tether.youtube.transcription_service import (
     TranscriptBlockedError,
     TranscriptNeedsReviewError,
     TranscriptRequestResult,
     TranscriptResult,
     TranscriptTransientError,
     TranscriptUnavailableError,
-    YouTubeService,
     YouTubeVideoNotFoundError,
-)
-from tether.youtube.store import (
-    IngestedVideo,
-    IngestState,
-    TranscriptStatus,
-    YouTubeSource,
-    derive_ingest_state,
 )
 
 
@@ -113,10 +113,10 @@ def unwrap_transcript_request(outcome: TranscriptRequestResult) -> TranscriptRes
     match outcome:
         case Ok(result):
             return result
-        case Err(TranscriptNeedsReview(video_id=video_id)):
-            raise TranscriptNeedsReviewError(video_id)
-        case Err(TranscriptExplicitlyUnavailable(video_id=video_id)):
-            raise TranscriptUnavailableError(video_id)
+        case Err(TranscriptNeedsReview(target=target)):
+            raise TranscriptNeedsReviewError(target.locator)
+        case Err(TranscriptExplicitlyUnavailable(target=target)):
+            raise TranscriptUnavailableError(target.locator)
         case Err(TranscriptProviderBlocked(source=source)):
             message = f"transcript provider {source} is blocked"
             raise TranscriptBlockedError(message, source=source)
@@ -143,8 +143,6 @@ class YouTubeVideoRead(BaseModel):
     ...     channel="PyConf",
     ...     topic="python",
     ...     description="",
-    ...     transcript=None,
-    ...     transcript_status="pending",
     ...     created_at=datetime(2026, 1, 1),
     ...     updated_at=datetime(2026, 1, 1),
     ...     ignored_at=None,
@@ -163,8 +161,6 @@ class YouTubeVideoRead(BaseModel):
     channel: str
     topic: str
     description: str
-    transcript: str | None
-    transcript_status: TranscriptStatus
     created_at: datetime
     updated_at: datetime
     ignored_at: datetime | None
@@ -172,14 +168,8 @@ class YouTubeVideoRead(BaseModel):
     duration_seconds: int | None
 
     @classmethod
-    def from_video(
-        cls,
-        video: IngestedVideo[Fetched],
-        *,
-        transcript_status: TranscriptStatus,
-        transcript: str | None = None,
-    ) -> YouTubeVideoRead:
-        """Render a stored video with its normalized transcript status."""
+    def from_video(cls, video: IngestedVideo[Fetched]) -> YouTubeVideoRead:
+        """Render stored YouTube metadata without Transcription state."""
         return cls(
             id=video.id,
             video_id=video.video_id,
@@ -189,44 +179,9 @@ class YouTubeVideoRead(BaseModel):
             channel=video.channel,
             topic=video.topic,
             description=video.description,
-            transcript=transcript,
-            transcript_status=transcript_status,
             created_at=video.created_at,
             updated_at=video.updated_at,
             ignored_at=video.ignored_at,
             liked_at=video.liked_at,
             duration_seconds=video.duration_seconds,
         )
-
-
-async def _single(request: Request, video: IngestedVideo[Fetched]) -> CapabilityOutcome:
-    """Render a single ingested video (ignore/retry carry no quota/cache)."""
-    transcript_status = await _runtime(request).youtube_service.transcript_status(
-        video.video_id
-    )
-    transcript = await _runtime(request).youtube_service.stored_transcript(
-        video.video_id
-    )
-    return CapabilityOutcome(
-        result=YouTubeVideoRead.from_video(
-            video, transcript_status=transcript_status, transcript=transcript
-        ).model_dump(mode="json")
-    )
-
-
-async def ignore(request: Request, video_id: str) -> CapabilityOutcome:
-    """Purge a video from ingestion."""
-    video = await _runtime(request).youtube_service.ignore(
-        video_id,
-        logger=get_request_logger(request),
-    )
-    return await _single(request, video)
-
-
-async def retry(request: Request, video_id: str) -> CapabilityOutcome:
-    """Return a previously purged video to ingestion."""
-    video = await _runtime(request).youtube_service.retry(
-        video_id,
-        logger=get_request_logger(request),
-    )
-    return await _single(request, video)

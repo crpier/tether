@@ -15,7 +15,7 @@ TETHER_ROOT = Path(__file__).resolve().parent.parent / "tether"
 
 # Integration packages. Legacy flat modules (`tether.gmail_store`, …) no
 # longer exist; consumers import through the package interface.
-INTEGRATIONS = {"youtube", "gmail", "health_connect"}
+INTEGRATIONS = {"youtube", "gmail", "health_connect", "transcripts"}
 
 
 def _dotted_module(path: Path) -> str:

@@ -49,7 +49,11 @@ if TYPE_CHECKING:
     from tether.triggers import TriggerService
     from tether.tts import TtsClient
     from tether.web_search import SearchProvider
-    from tether.youtube import YouTubeAuthService, YouTubeService
+    from tether.youtube import (
+        YouTubeAuthService,
+        YouTubeService,
+        YouTubeTranscriptionService,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +109,7 @@ class AppRuntime:
     vapid_public_key: str
     youtube_auth_service: YouTubeAuthService
     youtube_service: YouTubeService
+    youtube_transcription_service: YouTubeTranscriptionService
 
 
 def install_app_runtime(app: Starlette, runtime: AppRuntime) -> None:

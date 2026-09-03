@@ -25,7 +25,9 @@ from snektest import (
     test,
 )
 
+from tests.youtube_fixtures import create_youtube_transcript_test_schema
 from tether.structured_logging import Logger
+from tether.transcripts import TranscriptionAvailable, TranscriptionStore
 from tether.youtube.backup_import import (
     BackupLikedVideo,
     BackupTranscript,
@@ -33,13 +35,8 @@ from tether.youtube.backup_import import (
     SqliteLikesBackupReader,
     import_backup,
 )
-from tether.youtube.store import (
-    IngestedVideo,
-    TranscriptAvailable,
-    create_youtube_schema,
-    fetch_transcript_state,
-    write_transcript_available,
-)
+from tether.youtube.store import IngestedVideo
+from tether.youtube.transcription import youtube_transcription_target
 from tether.youtube.types import VideoId
 
 
@@ -52,7 +49,7 @@ def test_logger() -> Logger:
 async def make_db() -> AsyncGenerator[Database]:
     """A fresh in-memory Tether database with the YouTube schema applied."""
     db = await Database.initialize(backend=Config(database=":memory:"))
-    await create_youtube_schema(db)
+    await create_youtube_transcript_test_schema(db)
     yield db
     await db.close()
 
@@ -65,15 +62,11 @@ async def _video(db: Database, video_id: str) -> IngestedVideo[Fetched] | None:
 
 
 async def _transcript(db: Database, video_id: str) -> str | None:
-    """Return canonical transcript text for one imported video."""
-    async with db.transaction() as tx:
-        video = await tx.fetch_one_or_none(
-            select(IngestedVideo).where(IngestedVideo.video_id.eq(VideoId(video_id)))
-        )
-        if video is None:
-            return None
-        state = await fetch_transcript_state(tx, video.id)
-    return state.text if isinstance(state, TranscriptAvailable) else None
+    """Return Transcript text associated with one imported video."""
+    state = await TranscriptionStore(db).read(
+        youtube_transcription_target(VideoId(video_id)).key
+    )
+    return state.transcript.text if isinstance(state, TranscriptionAvailable) else None
 
 
 def _liked(video_id: str, **overrides: object) -> BackupLikedVideo:
@@ -259,7 +252,7 @@ async def existing_transcript_not_overwritten_by_empty() -> None:
     """A stored transcript wins over a blank backup transcript for the same id."""
     db = await load_fixture(make_db())
     async with db.transaction() as tx:
-        video = await tx.execute(
+        await tx.execute(
             insert(
                 IngestedVideo(
                     video_id=VideoId("v1"),
@@ -269,11 +262,14 @@ async def existing_transcript_not_overwritten_by_empty() -> None:
                     topic="python",
                     description="",
                 )
-            ).returning()
+            )
         )
-        await write_transcript_available(
-            tx, video.id, text="rich existing transcript", segments=()
-        )
+    await TranscriptionStore(db).save_available(
+        youtube_transcription_target(VideoId("v1")).key,
+        source=None,
+        text="rich existing transcript",
+        segments=(),
+    )
 
     reader = InMemoryLikesBackupReader(
         liked=[_liked("v1")],
@@ -291,7 +287,7 @@ async def existing_transcript_not_overwritten_by_present_backup() -> None:
     """An already-stored transcript is not clobbered by a different backup one."""
     db = await load_fixture(make_db())
     async with db.transaction() as tx:
-        video = await tx.execute(
+        await tx.execute(
             insert(
                 IngestedVideo(
                     video_id=VideoId("v1"),
@@ -301,11 +297,14 @@ async def existing_transcript_not_overwritten_by_present_backup() -> None:
                     topic="python",
                     description="",
                 )
-            ).returning()
+            )
         )
-        await write_transcript_available(
-            tx, video.id, text="local transcript", segments=()
-        )
+    await TranscriptionStore(db).save_available(
+        youtube_transcription_target(VideoId("v1")).key,
+        source=None,
+        text="local transcript",
+        segments=(),
+    )
 
     reader = InMemoryLikesBackupReader(
         transcripts=[BackupTranscript(video_id="v1", transcript="backup transcript")]

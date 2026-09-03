@@ -21,15 +21,10 @@ from pydantic import BaseModel, RootModel
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from tether.capabilities import rest_response, translate_domain_errors
+from tether.capabilities import translate_domain_errors
 from tether.structured_logging import get_request_logger
+from tether.transcripts import TranscriptionStatus
 from tether.youtube.capabilities import YOUTUBE_ERRORS, YouTubeVideoRead
-from tether.youtube.capabilities import (
-    ignore as _capabilities_ignore,
-)
-from tether.youtube.capabilities import (
-    retry as _capabilities_retry,
-)
 from tether.youtube.capabilities import (
     unwrap_transcript_request as _unwrap_transcript_request,
 )
@@ -38,12 +33,15 @@ from tether.youtube.service import (
     BrowseResult,
     CacheMeta,
     SearchResult,
-    TranscriptDecision,
-    TranscriptResult,
     YouTubeService,
     YouTubeSyncStatus,
 )
-from tether.youtube.store import TranscriptStatus, YouTubeSource
+from tether.youtube.store import YouTubeSource
+from tether.youtube.transcription_service import (
+    TranscriptDecision,
+    TranscriptResult,
+    YouTubeTranscriptionService,
+)
 
 
 class _YouTubeRoutesRuntime(Protocol):
@@ -55,6 +53,7 @@ class _YouTubeRoutesRuntime(Protocol):
     """
 
     youtube_service: YouTubeService
+    youtube_transcription_service: YouTubeTranscriptionService
 
 
 def _runtime(request: Request) -> _YouTubeRoutesRuntime:
@@ -96,38 +95,23 @@ class YouTubeVideoListResponse(BaseModel):
     ) -> YouTubeVideoListResponse:
         """Render a browse/search result as its HTTP representation."""
         return cls(
-            videos=[
-                YouTubeVideoRead.from_video(
-                    video,
-                    transcript_status=result.transcript_statuses[video.video_id],
-                    transcript=result.transcripts.get(video.video_id),
-                )
-                for video in result.videos
-            ],
+            videos=[YouTubeVideoRead.from_video(video) for video in result.videos],
             quota=result.quota,
             cache=result.cache,
         )
 
 
 class YouTubeTranscriptResponse(BaseModel):
-    """A fetched transcript: the updated video, its text, and quota + cache."""
+    """Transcript text fetched through a YouTube media association."""
 
-    video: YouTubeVideoRead
     transcript: str
-    quota: QuotaMeta
     cache: CacheMeta
 
     @classmethod
     def from_result(cls, result: TranscriptResult) -> YouTubeTranscriptResponse:
         """Render a transcript result as its HTTP representation."""
         return cls(
-            video=YouTubeVideoRead.from_video(
-                result.video,
-                transcript_status="available",
-                transcript=result.transcript,
-            ),
             transcript=result.transcript,
-            quota=result.quota,
             cache=result.cache,
         )
 
@@ -139,52 +123,46 @@ class TranscriptProviderPauseRead(BaseModel):
     paused_until: datetime
 
 
-class YouTubeSyncStatusRead(BaseModel):
-    """HTTP snapshot of the background ingestion's progress and health.
+class YouTubeTranscriptionStatusRead(BaseModel):
+    """Transcription progress for the associated YouTube corpus."""
 
-    >>> read = YouTubeSyncStatusRead(
-    ...     videos_total=3,
-    ...     transcripts_done=1,
-    ...     transcripts_pending=1,
-    ...     transcripts_needs_review=0,
-    ...     transcripts_unavailable=1,
-    ...     last_synced_at=None,
-    ...     quota=QuotaMeta(limit=10, used=0, remaining=10),
-    ...     api_paused_until=None,
-    ...     transcript_providers_paused=[],
-    ... )
-    >>> read.videos_total
-    3
-    """
+    done: int
+    pending: int
+    needs_review: int
+    unavailable: int
+    providers_paused: list[TranscriptProviderPauseRead]
+
+
+class YouTubeSyncStatusRead(BaseModel):
+    """HTTP snapshot keeping YouTube and Transcription state distinct."""
 
     videos_total: int
-    transcripts_done: int
-    transcripts_pending: int
-    transcripts_needs_review: int
-    transcripts_unavailable: int
     last_synced_at: datetime | None
     quota: QuotaMeta
     api_paused_until: datetime | None
-    transcript_providers_paused: list[TranscriptProviderPauseRead]
+    transcriptions: YouTubeTranscriptionStatusRead
 
     @classmethod
     def from_status(cls, status: YouTubeSyncStatus) -> YouTubeSyncStatusRead:
         """Render a service sync-status snapshot as its HTTP representation."""
         return cls(
             videos_total=status.videos_total,
-            transcripts_done=status.transcripts_done,
-            transcripts_pending=status.transcripts_pending,
-            transcripts_needs_review=status.transcripts_needs_review,
-            transcripts_unavailable=status.transcripts_unavailable,
             last_synced_at=status.last_synced_at,
             quota=status.quota,
             api_paused_until=status.api_paused_until,
-            transcript_providers_paused=[
-                TranscriptProviderPauseRead(
-                    source=pause.source, paused_until=pause.paused_until
-                )
-                for pause in status.transcript_providers_paused
-            ],
+            transcriptions=YouTubeTranscriptionStatusRead(
+                done=status.transcriptions.done,
+                pending=status.transcriptions.pending,
+                needs_review=status.transcriptions.needs_review,
+                unavailable=status.transcriptions.unavailable,
+                providers_paused=[
+                    TranscriptProviderPauseRead(
+                        source=pause.source,
+                        paused_until=pause.paused_until,
+                    )
+                    for pause in status.transcriptions.providers_paused
+                ],
+            ),
         )
 
 
@@ -194,7 +172,7 @@ class TranscriptDecisionRead(BaseModel):
     video_id: str
     title: str
     channel: str
-    transcript_status: TranscriptStatus = "needs_review"
+    transcript_status: TranscriptionStatus = "needs_review"
     last_error: str | None
     attempts: int
 
@@ -217,7 +195,7 @@ class TranscriptDecisionOutcomeRead(BaseModel):
     """The transcript status after a human decision."""
 
     video_id: str
-    transcript_status: TranscriptStatus
+    transcript_status: TranscriptionStatus
 
 
 _translate_domain_errors = translate_domain_errors(YOUTUBE_ERRORS)
@@ -273,7 +251,7 @@ async def search_youtube(
 )
 async def transcript_decisions(request: Request) -> Response:
     """List transcript failures awaiting a human decision."""
-    decisions = await _runtime(request).youtube_service.transcript_decisions(
+    decisions = await _runtime(request).youtube_transcription_service.decisions(
         logger=get_request_logger(request)
     )
     body = TranscriptDecisionListResponse(
@@ -288,7 +266,7 @@ async def transcript_decisions(request: Request) -> Response:
 @_translate_domain_errors
 async def fetch_youtube_transcript(request: Request, video_id: str) -> Response:
     """Fetch and persist a transcript for an ingested video."""
-    outcome = await _runtime(request).youtube_service.fetch_transcript(
+    outcome = await _runtime(request).youtube_transcription_service.fetch(
         video_id,
         logger=get_request_logger(request),
     )
@@ -305,7 +283,7 @@ async def fetch_youtube_transcript(request: Request, video_id: str) -> Response:
 @_translate_domain_errors
 async def keep_trying_transcript(request: Request, video_id: str) -> Response:
     """Return a review-needed transcript to pending acquisition."""
-    outcome = await _runtime(request).youtube_service.keep_trying_transcript(
+    outcome = await _runtime(request).youtube_transcription_service.keep_trying(
         video_id, logger=get_request_logger(request)
     )
     body = TranscriptDecisionOutcomeRead(
@@ -321,30 +299,10 @@ async def keep_trying_transcript(request: Request, video_id: str) -> Response:
 @_translate_domain_errors
 async def give_up_transcript(request: Request, video_id: str) -> Response:
     """Confirm that a review-needed video has no transcript worth pursuing."""
-    outcome = await _runtime(request).youtube_service.give_up_transcript(
+    outcome = await _runtime(request).youtube_transcription_service.give_up(
         video_id, logger=get_request_logger(request)
     )
     body = TranscriptDecisionOutcomeRead(
         video_id=outcome.video_id, transcript_status=outcome.transcript_status
     )
     return JSONResponse(body.model_dump())
-
-
-@router.post("/api/youtube/{video_id}/ignore", response_model=YouTubeVideoRead)
-@_translate_domain_errors
-async def ignore_youtube_video(request: Request, video_id: str) -> Response:
-    """Purge a video from ingestion."""
-    outcome = await _capabilities_ignore(request, video_id)
-    return rest_response(outcome)
-
-
-@router.post("/api/youtube/{video_id}/retry", response_model=YouTubeVideoRead)
-@_translate_domain_errors
-async def retry_youtube_video(request: Request, video_id: str) -> Response:
-    """Un-ignore a previously purged video."""
-    outcome = await _capabilities_retry(request, video_id)
-    return rest_response(outcome)
-
-
-# `/api/youtube/search` precedes `/api/youtube/{video_id}/...` so the literal
-# path wins.

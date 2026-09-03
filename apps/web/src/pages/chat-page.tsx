@@ -281,11 +281,6 @@ const TOOL_LABELS: Partial<
     receipt: true,
     running: "Deleting reminder…",
   },
-  ignore_youtube_video: {
-    done: "Ignored video",
-    receipt: true,
-    running: "Ignoring video…",
-  },
   label_ebook: {
     done: "Labeled ebook",
     receipt: true,
@@ -306,11 +301,6 @@ const TOOL_LABELS: Partial<
     done: "Recorded product feedback",
     receipt: true,
     running: "Recording product feedback…",
-  },
-  retry_youtube_video: {
-    done: "Retried video",
-    receipt: true,
-    running: "Retrying video…",
   },
   search_gmail: { done: "Searched Gmail", running: "Searching Gmail…" },
   set_bucket_item_intent: {

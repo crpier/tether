@@ -3,9 +3,8 @@
 One app, both shells, seeded with an `InMemoryYouTubeApi` so no live YouTube
 call is ever made. The REST routes serve full read models with quota + cache in
 the body; the `/internal/tools/*` endpoints serve deliberately compact,
-context-budgeted rows with quota + cache on the envelope. Both translate
-failures through `tether.youtube.capabilities.YOUTUBE_ERRORS`, and ignore/retry
-share one capability execute outright.
+context-budgeted rows with quota + cache on the envelope.
+Both translate failures through `tether.youtube.capabilities.YOUTUBE_ERRORS`.
 """
 
 from datetime import UTC, datetime
@@ -98,7 +97,7 @@ def get_youtube_browses_with_quota_and_cache_metadata() -> None:
     # Browse is local: a cache hit, reporting the boot sync's spend (list+detail).
     assert_eq(body["cache"]["hit"], True)
     assert_eq(body["quota"]["used"], 2)
-    assert_eq({item["transcript_status"] for item in body["videos"]}, {"pending"})
+    assert_eq(all("transcript_status" not in item for item in body["videos"]), True)
 
 
 @test()
@@ -113,79 +112,10 @@ def youtube_reads_expose_liked_time_and_video_duration() -> None:
         login(client)
         rest_video = client.get("/api/youtube").json()["videos"][0]
         tool_video = call_tool(client, "browse_youtube")["result"][0]
-        fetched_video = call_tool(client, "fetch_youtube_transcript", video_id="v1")[
-            "result"
-        ]["video"]
 
-    for projected in (rest_video, tool_video, fetched_video):
+    for projected in (rest_video, tool_video):
         assert_eq(projected["liked_at"], "2026-08-20T12:30:00Z")
         assert_eq(projected["duration_seconds"], 3723)
-
-
-@test()
-def summarize_youtube_activity_returns_bounded_proxy_totals() -> None:
-    """A half-open interval reports counts, duration, and missing-data coverage."""
-    api = InMemoryYouTubeApi(
-        liked=[
-            activity_video(
-                "included-start",
-                liked_at=datetime(2026, 8, 9, 21, tzinfo=UTC),
-                duration_seconds=60,
-            ),
-            activity_video(
-                "included-middle",
-                liked_at=datetime(2026, 8, 12, 12, tzinfo=UTC),
-                duration_seconds=120,
-            ),
-            activity_video(
-                "included-missing",
-                liked_at=datetime(2026, 8, 14, 12, tzinfo=UTC),
-            ),
-            activity_video(
-                "excluded-end",
-                liked_at=datetime(2026, 8, 16, 21, tzinfo=UTC),
-                duration_seconds=300,
-            ),
-            activity_video(
-                "excluded-ignored",
-                liked_at=datetime(2026, 8, 13, 12, tzinfo=UTC),
-                duration_seconds=600,
-            ),
-        ]
-    )
-    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
-        _ = call_tool(client, "ignore_youtube_video", video_id="excluded-ignored")
-        envelope = call_tool(
-            client,
-            "summarize_youtube_activity",
-            after="2026-08-10T00:00:00+03:00",
-            before="2026-08-17T00:00:00+03:00",
-        )
-        empty = call_tool(
-            client,
-            "summarize_youtube_activity",
-            after="2030-01-01T00:00:00Z",
-            before="2030-01-08T00:00:00Z",
-        )
-
-    assert_eq(envelope["success"], True)
-    assert_eq(
-        envelope["result"],
-        {
-            "after": "2026-08-09T21:00:00Z",
-            "before": "2026-08-16T21:00:00Z",
-            "video_count": 3,
-            "videos_with_known_duration": 2,
-            "videos_missing_duration": 1,
-            "total_video_duration_seconds": 180,
-            "average_video_duration_seconds": 90,
-            "proxy": "liked_videos",
-            "duration_semantics": "sum_of_full_video_lengths_not_watch_time",
-        },
-    )
-    assert_eq(empty["result"]["video_count"], 0)
-    assert_eq(empty["result"]["total_video_duration_seconds"], 0)
-    assert_eq(empty["result"]["average_video_duration_seconds"], None)
 
 
 @test()
@@ -265,8 +195,7 @@ def post_transcript_fetches_and_makes_it_searchable() -> None:
         assert_eq(response.status_code, 200)
         body = response.json()
         assert_eq(body["transcript"], "today we cover coroutines")
-        assert_eq(body["video"]["transcript"], "today we cover coroutines")
-        assert_eq(body["video"]["transcript_status"], "available")
+        assert_not_in("video", body)
 
         found = client.get("/api/youtube/search", params={"q": "coroutines"})
 
@@ -332,7 +261,7 @@ def unavailable_transcript_appears_in_the_decision_queue() -> None:
                 "title": "Captionless talk",
                 "channel": "PyConf",
                 "transcript_status": "needs_review",
-                "last_error": "v1",
+                "last_error": "https://www.youtube.com/watch?v=v1",
                 "attempts": 1,
             }
         ],
@@ -368,40 +297,6 @@ def transcript_decisions_can_keep_trying_or_give_up() -> None:
 
 
 @test()
-def post_ignore_then_retry_round_trips_a_video() -> None:
-    """`POST .../ignore` purges a video from browse; `POST .../retry` returns it."""
-    api = InMemoryYouTubeApi(liked=[video("v1")])
-    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
-        login(client)
-        _ = client.get("/api/youtube")
-
-        ignored = client.post("/api/youtube/v1/ignore")
-        assert_eq(ignored.status_code, 200)
-        assert_eq(ignored.json()["state"], "ignored")
-
-        after_ignore = client.get("/api/youtube")
-        assert_not_in("v1", {v["video_id"] for v in after_ignore.json()["videos"]})
-
-        retried = client.post("/api/youtube/v1/retry")
-        assert_eq(retried.json()["state"], "active")
-
-        after_retry = client.get("/api/youtube")
-
-    assert_in("v1", {v["video_id"] for v in after_retry.json()["videos"]})
-
-
-@test()
-def post_ignore_unknown_video_is_404() -> None:
-    """Ignoring a never-ingested video is a 404."""
-    api = InMemoryYouTubeApi()
-    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
-        login(client)
-        response = client.post("/api/youtube/nope/ignore")
-
-    assert_eq(response.status_code, 404)
-
-
-@test()
 def get_youtube_status_reports_sync_progress() -> None:
     """`GET /api/youtube/status` summarises ingested videos, quota, and pauses.
 
@@ -417,15 +312,15 @@ def get_youtube_status_reports_sync_progress() -> None:
     assert_eq(response.status_code, 200)
     body = response.json()
     assert_eq(body["videos_total"], 2)
-    assert_eq(body["transcripts_pending"], 2)
-    assert_eq(body["transcripts_done"], 0)
-    assert_eq(body["transcripts_needs_review"], 0)
-    assert_eq(body["transcripts_unavailable"], 0)
+    assert_eq(body["transcriptions"]["pending"], 2)
+    assert_eq(body["transcriptions"]["done"], 0)
+    assert_eq(body["transcriptions"]["needs_review"], 0)
+    assert_eq(body["transcriptions"]["unavailable"], 0)
     # The boot sync ran, so last-run is stamped and the day's spend is reported.
     assert body["last_synced_at"] is not None
     assert_eq(body["quota"]["used"], 2)
     assert_eq(body["api_paused_until"], None)
-    assert_eq(body["transcript_providers_paused"], [])
+    assert_eq(body["transcriptions"]["providers_paused"], [])
 
 
 @test()
@@ -467,7 +362,7 @@ def browse_returns_videos_with_quota_and_cache_metadata() -> None:
     assert_eq(envelope["cache"]["source"], "cache")
     assert_eq(envelope["quota"]["limit"], 1000)
     assert_eq(envelope["quota"]["used"], 2)
-    assert_eq({item["transcript_status"] for item in envelope["result"]}, {"pending"})
+    assert_eq(all("transcript_status" not in item for item in envelope["result"]), True)
 
 
 @test()
@@ -489,7 +384,7 @@ def browse_rows_are_compact_and_omit_the_transcript() -> None:
     assert_not_in("transcript", row)
     # This video has no description, so the optional field is absent.
     assert_not_in("description", row)
-    assert_eq(row["transcript_status"], "available")
+    assert_not_in("transcript_status", row)
     assert_eq(
         set(row),
         {
@@ -499,7 +394,6 @@ def browse_rows_are_compact_and_omit_the_transcript() -> None:
             "topic",
             "source",
             "state",
-            "transcript_status",
             "liked_at",
             "duration_seconds",
         },
@@ -558,8 +452,8 @@ def search_caps_rows_at_the_limit() -> None:
 
 
 @test()
-def tool_rows_distinguish_review_needed_from_confirmed_unavailable() -> None:
-    """The agent sees provider exhaustion and the later human disposition."""
+def transcription_decision_does_not_change_the_youtube_video_shape() -> None:
+    """Acquisition state stays on Transcript operations, not video list rows."""
     api = InMemoryYouTubeApi(liked=[video("v1")])
     with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
         failed = call_tool(client, "fetch_youtube_transcript", video_id="v1")
@@ -567,48 +461,16 @@ def tool_rows_distinguish_review_needed_from_confirmed_unavailable() -> None:
         assert_eq(failed["error"]["code"], "transcript_needs_review")
         assert_eq(api.transcript_calls, 1)
         needs_review = call_tool(client, "browse_youtube")["result"][0]
-        assert_eq(needs_review["transcript_status"], "needs_review")
+        assert_not_in("transcript_status", needs_review)
 
         login(client)
         _ = client.post("/api/youtube/v1/transcript-decision/give-up")
         unavailable = call_tool(client, "browse_youtube")["result"][0]
         stopped = call_tool(client, "fetch_youtube_transcript", video_id="v1")
 
-    assert_eq(unavailable["transcript_status"], "unavailable")
+    assert_not_in("transcript_status", unavailable)
     assert_eq(stopped["error"]["code"], "transcript_unavailable")
     assert_eq(api.transcript_calls, 1)
-
-
-@test()
-def ignore_then_retry_round_trips_a_video() -> None:
-    """Ignoring purges a video from browse; retry returns it."""
-    api = InMemoryYouTubeApi(liked=[video("v1")])
-    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
-        _ = call_tool(client, "browse_youtube")
-
-        ignored = call_tool(client, "ignore_youtube_video", video_id="v1")
-        assert_eq(ignored["result"]["state"], "ignored")
-
-        after_ignore = call_tool(client, "browse_youtube")
-        assert_not_in("v1", {v["video_id"] for v in after_ignore["result"]})
-
-        retried = call_tool(client, "retry_youtube_video", video_id="v1")
-        assert_eq(retried["result"]["state"], "active")
-
-        after_retry = call_tool(client, "browse_youtube")
-
-    assert_in("v1", {v["video_id"] for v in after_retry["result"]})
-
-
-@test()
-def ignoring_an_unknown_video_yields_a_not_found_envelope() -> None:
-    """Purging a never-ingested video is a well-formed not-found envelope."""
-    api = InMemoryYouTubeApi()
-    with TemporaryDirectory() as directory, make_client(Path(directory), api) as client:
-        envelope = call_tool(client, "ignore_youtube_video", video_id="nope")
-
-    assert_eq(envelope["success"], False)
-    assert_eq(envelope["error"]["code"], "not_found")
 
 
 @test()
@@ -623,7 +485,7 @@ def fetch_transcript_returns_text_and_makes_it_searchable() -> None:
 
         fetched = call_tool(client, "fetch_youtube_transcript", video_id="v1")
         assert_eq(fetched["result"]["transcript"], "today we cover coroutines")
-        assert_eq(fetched["result"]["video"]["transcript_status"], "available")
+        assert_not_in("video", fetched["result"])
         assert_eq(fetched["cache"]["hit"], False)
 
         found = call_tool(client, "search_youtube", q="coroutines")

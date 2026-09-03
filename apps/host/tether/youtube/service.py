@@ -2,53 +2,29 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Literal, Protocol, Self
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Protocol, Self
 
 from opentelemetry.trace import Tracer
-from pydantic import UUID7
-from snekok.result import Err, Ok, Result
-from snekok.validation import validate_python_unsafe
 from snekql.sqlite import (
-    CurrentTimestamp,
     Database,
     Fetched,
     Transaction,
-    delete,
     select,
-    update,
 )
 
 from tether.capability_contracts import CacheMeta
-from tether.escalating_pause import PauseState
-from tether.events import EventPublisher, InvalidateEvent, NullEventPublisher
 from tether.structured_logging import Logger
-from tether.transcripts.contracts import (
-    TranscriptAcquisitionDeferred,
-    TranscriptAcquisitionPort,
-    TranscriptExplicitlyUnavailable,
-    TranscriptNeedsReview,
-    TranscriptProviderBlocked,
-    TranscriptRequestFailure,
-    TranscriptRetryScheduled,
-    TranscriptStored,
-)
 from tether.youtube.quota import QuotaMeta, YouTubeApiClient
-from tether.youtube.store import (
-    IngestedVideo,
-    TranscriptAvailable,
-    TranscriptReviewNeeded,
-    TranscriptState,
-    TranscriptStatus,
-    YouTubeSource,
-    YouTubeTranscript,
-    fetch_transcript_state,
-    fetch_transcript_states,
-    write_transcript_unavailable,
-)
+from tether.youtube.store import IngestedVideo, YouTubeSource
 from tether.youtube.sync import read_last_youtube_sync_at
+from tether.youtube.transcription_service import (
+    YouTubeTranscriptionService,
+    YouTubeTranscriptionSummary,
+    YouTubeVideoNotFoundError,
+)
 from tether.youtube.types import VideoId
 
 if TYPE_CHECKING:
@@ -60,59 +36,6 @@ _DEFAULT_SEMANTIC_LIMIT = 50
 def _empty_snippets() -> dict[str, str]:
     """Typed empty default for `SearchResult.snippets` (the lexical path)."""
     return {}
-
-
-def _empty_transcripts() -> dict[VideoId, str]:
-    """Typed empty default for result rows without available transcript text."""
-    return {}
-
-
-def _transcript_projections(
-    videos: Sequence[IngestedVideo[Fetched]],
-    states: Mapping[UUID7, TranscriptState],
-) -> tuple[dict[VideoId, TranscriptStatus], dict[VideoId, str]]:
-    """Project canonical states into status and available-text lookup maps."""
-    statuses: dict[VideoId, TranscriptStatus] = {
-        video.video_id: (states[video.id].status if video.id in states else "pending")
-        for video in videos
-    }
-    transcripts: dict[VideoId, str] = {
-        video.video_id: state.text
-        for video in videos
-        if isinstance(state := states.get(video.id), TranscriptAvailable)
-    }
-    return statuses, transcripts
-
-
-class YouTubeVideoNotFoundError(Exception):
-    """Raised when an operation targets a video absent from ingestion."""
-
-
-class TranscriptUnavailableError(Exception):
-    """Raised when an application request targets unavailable transcript data."""
-
-
-class TranscriptNeedsReviewError(TranscriptUnavailableError):
-    """Raised when provider exhaustion requires a human transcript decision."""
-
-
-class TranscriptTransientError(Exception):
-    """Raised when an on-demand transcript request fails transiently."""
-
-
-class TranscriptBlockedError(Exception):
-    """Raised when an on-demand transcript request is provider-blocked."""
-
-    def __init__(
-        self,
-        message: str = "",
-        *,
-        retry_after: timedelta | None = None,
-        source: str | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.retry_after: timedelta | None = retry_after
-        self.source: str | None = source
 
 
 class EmptyYouTubeSearchQueryError(Exception):
@@ -133,17 +56,6 @@ class InvalidYouTubeActivityRangeError(Exception):
         return cls("before must be later than after")
 
 
-class ProviderPausesPort(Protocol):
-    """Loads persisted provider-health pause state for status reporting.
-
-    Satisfied by `tether.transcripts.provider_health.load_all_provider_pauses`;
-    injected so this module never imports the transcripts worker, which reads
-    YouTube sync state through this package's interface (ADR-0025).
-    """
-
-    async def __call__(self, database: Database) -> Mapping[str, PauseState]: ...
-
-
 class YouTubeSearchPort(Protocol):
     """Rank transcript-bearing videos for `YouTubeService.search`."""
 
@@ -159,10 +71,8 @@ class BrowseResult:
     """A topic-filtered browse: the local videos plus the day's quota/cache."""
 
     videos: list[IngestedVideo[Fetched]]
-    transcript_statuses: Mapping[VideoId, TranscriptStatus]
     cache: CacheMeta
     quota: QuotaMeta
-    transcripts: Mapping[VideoId, str] = field(default_factory=_empty_transcripts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,106 +96,42 @@ class YouTubeActivitySummary:
 
 @dataclass(frozen=True, slots=True)
 class SearchResult:
-    """A search across saved content + transcripts, with the day's quota/cache.
-
-    `snippets` maps a matched video's `video_id` to the transcript excerpt that
-    explains the match; it is populated by the semantic path and empty for the
-    lexical fallback."""
+    """A video search with an optional matching Transcript excerpt per result."""
 
     videos: list[IngestedVideo[Fetched]]
-    transcript_statuses: Mapping[VideoId, TranscriptStatus]
     cache: CacheMeta
     quota: QuotaMeta
-    transcripts: Mapping[VideoId, str] = field(default_factory=_empty_transcripts)
     snippets: dict[str, str] = field(default_factory=_empty_snippets)
 
 
 @dataclass(frozen=True, slots=True)
-class TranscriptResult:
-    """A fetched transcript, the updated video row, and quota/cache."""
-
-    video: IngestedVideo[Fetched]
-    transcript: str
-    cache: CacheMeta
-    quota: QuotaMeta
-
-
-type TranscriptRequestResult = Result[TranscriptResult, TranscriptRequestFailure]
-
-
-@dataclass(frozen=True, slots=True)
-class TranscriptDecision:
-    """A provider-exhausted video awaiting the human's transcript decision."""
-
-    video: IngestedVideo[Fetched]
-    last_error: str | None
-    attempts: int
-
-
-@dataclass(frozen=True, slots=True)
-class TranscriptDecisionOutcome:
-    """The normalized status produced by a human transcript decision."""
-
-    video_id: str
-    transcript_status: Literal["pending", "unavailable"]
-
-
-@dataclass(frozen=True, slots=True)
-class TranscriptProviderPause:
-    """A blockable transcript source currently inside its IP-block cooldown."""
-
-    source: str
-    paused_until: datetime
-
-
-@dataclass(frozen=True, slots=True)
 class YouTubeSyncStatus:
-    """A snapshot of the background ingestion's progress and health.
-
-    The transcript counts partition the active corpus: every active video is
-    transcribed, still pending/retrying, awaiting a human decision, or explicitly
-    unavailable; their sum is `videos_total`. `last_synced_at`
-    is when the likes sync last ran, `quota` the day's YouTube Data API budget
-    (only liked-list and metadata calls count against it), and the two pause fields
-    explain a stall
-    (a live Data API block, or a per-source transcript provider block).
-    """
+    """YouTube ingestion health plus a separate Transcription summary."""
 
     videos_total: int
-    transcripts_done: int
-    transcripts_pending: int
-    transcripts_needs_review: int
-    transcripts_unavailable: int
     last_synced_at: datetime | None
     quota: QuotaMeta
     api_paused_until: datetime | None
-    transcript_providers_paused: list[TranscriptProviderPause]
+    transcriptions: YouTubeTranscriptionSummary
 
 
 def _debug(logger: Logger, event: str, **context: object) -> None:
     logger.debug(event, **context)
 
 
-def _info(logger: Logger, event: str, **context: object) -> None:
-    logger.info(event, **context)
-
-
 @dataclass
 class YouTubeService:
     """Capability surface for the local YouTube ingested corpus.
 
-    Browse, Search, and activity summaries read only `IngestedVideo` (instant,
-    no quota). Transcript requests delegate to the shared acquisition service
-    and short-circuit once text is stored. Each mutation owns its transaction.
+    Browse, Search, and activity summaries read local video metadata. Search
+    composes with the separate YouTube Transcription adapter for transcript text.
     """
 
     database: Database
     client: YouTubeApiClient
     tracer: Tracer
-    acquisition: TranscriptAcquisitionPort | None = None
-    event_publisher: EventPublisher = field(default_factory=NullEventPublisher)
+    transcriptions: YouTubeTranscriptionService
     youtube_search: YouTubeSearchPort | None = None
-    provider_pauses: ProviderPausesPort | None = None
 
     async def summarize_activity(
         self,
@@ -369,112 +215,11 @@ class YouTubeService:
                 query = query.limit(limit)
             async with self.database.transaction() as tx:
                 videos = await tx.fetch_all(query)
-                states = await fetch_transcript_states(tx, videos)
-            transcript_statuses, transcripts = _transcript_projections(videos, states)
         _debug(logger, "YouTube browse completed", result_count=len(videos))
         return BrowseResult(
             videos=videos,
-            transcript_statuses=transcript_statuses,
             cache=CacheMeta(hit=True, source="cache"),
             quota=await self.client.snapshot(),
-            transcripts=transcripts,
-        )
-
-    async def transcript_status(self, video_id: str) -> TranscriptStatus:
-        """Read one video's normalized transcript status from local state."""
-        async with self.database.transaction() as tx:
-            video = await self._fetch(tx, video_id)
-            state = await fetch_transcript_state(tx, video.id)
-        return state.status if state is not None else "pending"
-
-    async def stored_transcript(self, video_id: str) -> str | None:
-        """Return already-persisted transcript text without acquiring upstream."""
-        async with self.database.transaction() as tx:
-            video = await self._fetch(tx, video_id)
-            state = await fetch_transcript_state(tx, video.id)
-        return state.text if isinstance(state, TranscriptAvailable) else None
-
-    async def transcript_decisions(self, *, logger: Logger) -> list[TranscriptDecision]:
-        """List active videos whose providers are exhausted, newest decision first."""
-        with self.tracer.start_as_current_span("YouTubeService.transcript_decisions"):
-            async with self.database.transaction() as tx:
-                rows = await tx.fetch_all(
-                    select(YouTubeTranscript)
-                    .where(YouTubeTranscript.status.eq("needs_review"))
-                    .order_by(YouTubeTranscript.updated_at.desc())
-                )
-                states = [
-                    validate_python_unsafe(TranscriptReviewNeeded, row) for row in rows
-                ]
-                if not states:
-                    return []
-                videos = await tx.fetch_all(
-                    select(IngestedVideo)
-                    .where(
-                        IngestedVideo.id.in_(
-                            *(state.ingested_video_id for state in states)
-                        )
-                    )
-                    .where(IngestedVideo.ignored_at.is_null())
-                )
-            video_by_id = {video.id: video for video in videos}
-            decisions = [
-                TranscriptDecision(
-                    video=video_by_id[state.ingested_video_id],
-                    last_error=state.last_error,
-                    attempts=state.failed_attempts,
-                )
-                for state in states
-                if state.ingested_video_id in video_by_id
-            ]
-        _debug(logger, "Listed transcript decisions", result_count=len(decisions))
-        return decisions
-
-    async def keep_trying_transcript(
-        self, video_id: str, *, logger: Logger
-    ) -> TranscriptDecisionOutcome:
-        """Return a review-needed transcript to the background acquisition queue."""
-
-        async def _keep_trying(tx: Transaction) -> None:
-            video = await self._fetch(tx, video_id)
-            state = await fetch_transcript_state(tx, video.id)
-            if not isinstance(state, TranscriptReviewNeeded):
-                raise TranscriptUnavailableError(video_id)
-            _ = await tx.execute(
-                delete(YouTubeTranscript).where(
-                    YouTubeTranscript.ingested_video_id.eq(video.id)
-                )
-            )
-
-        async with self.database.transaction(mode="immediate") as tx:
-            await _keep_trying(tx)
-        await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
-        _info(logger, "Transcript acquisition re-opened", video_id=video_id)
-        return TranscriptDecisionOutcome(video_id=video_id, transcript_status="pending")
-
-    async def give_up_transcript(
-        self, video_id: str, *, logger: Logger
-    ) -> TranscriptDecisionOutcome:
-        """Settle a review-needed transcript as explicitly unavailable."""
-
-        async def _give_up(tx: Transaction) -> None:
-            video = await self._fetch(tx, video_id)
-            state = await fetch_transcript_state(tx, video.id)
-            if not isinstance(state, TranscriptReviewNeeded):
-                raise TranscriptUnavailableError(video_id)
-            await write_transcript_unavailable(
-                tx,
-                video.id,
-                failed_attempts=state.failed_attempts,
-                last_error=state.last_error,
-            )
-
-        async with self.database.transaction(mode="immediate") as tx:
-            await _give_up(tx)
-        await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
-        _info(logger, "Transcript marked unavailable", video_id=video_id)
-        return TranscriptDecisionOutcome(
-            video_id=video_id, transcript_status="unavailable"
         )
 
     async def sync_status(self, *, logger: Logger) -> YouTubeSyncStatus:
@@ -492,52 +237,22 @@ class YouTubeService:
                 active = await tx.fetch_all(
                     select(IngestedVideo).where(IngestedVideo.ignored_at.is_null())
                 )
-                states = await fetch_transcript_states(tx, active)
-            done_count = sum(
-                states.get(video.id) is not None
-                and states[video.id].status == "available"
-                for video in active
-            )
-            needs_review_count = sum(
-                states.get(video.id) is not None
-                and states[video.id].status == "needs_review"
-                for video in active
-            )
-            unavailable_count = sum(
-                states.get(video.id) is not None
-                and states[video.id].status == "unavailable"
-                for video in active
-            )
+            transcription_summary = await self.transcriptions.summary(active)
             total = len(active)
-            pending_count = total - done_count - needs_review_count - unavailable_count
             last_run = await read_last_youtube_sync_at(self.database)
             api_paused_until = await self.client.api_paused_until(now=now)
-            pauses: Mapping[str, PauseState] = (
-                await self.provider_pauses(self.database)
-                if self.provider_pauses is not None
-                else dict[str, PauseState]()
-            )
-        providers_paused = [
-            TranscriptProviderPause(source=source, paused_until=pause.paused_until)
-            for source, pause in sorted(pauses.items())
-            if pause.is_paused(now) and pause.paused_until is not None
-        ]
         status = YouTubeSyncStatus(
             videos_total=total,
-            transcripts_done=done_count,
-            transcripts_pending=pending_count,
-            transcripts_needs_review=needs_review_count,
-            transcripts_unavailable=unavailable_count,
             last_synced_at=last_run,
             quota=await self.client.snapshot(),
             api_paused_until=api_paused_until,
-            transcript_providers_paused=providers_paused,
+            transcriptions=transcription_summary,
         )
         _debug(
             logger,
             "YouTube sync status computed",
             videos_total=total,
-            transcripts_pending=pending_count,
+            transcripts_pending=transcription_summary.pending,
         )
         return status
 
@@ -574,7 +289,6 @@ class YouTubeService:
             _debug(logger, "YouTube semantic search completed", result_count=0)
             return SearchResult(
                 videos=[],
-                transcript_statuses={},
                 cache=CacheMeta(hit=True, source="cache"),
                 quota=await self.client.snapshot(),
             )
@@ -585,8 +299,6 @@ class YouTubeService:
                 .where(IngestedVideo.video_id.in_(*video_ids))
                 .where(IngestedVideo.ignored_at.is_null())
             )
-            states = await fetch_transcript_states(tx, videos)
-        transcript_statuses, transcripts = _transcript_projections(videos, states)
         by_video_id = {video.video_id: video for video in videos}
         # Preserve relevance order and drop any match whose video has since been
         # ignored or deleted (index drift the next reconcile would clean up).
@@ -603,10 +315,8 @@ class YouTubeService:
         _debug(logger, "YouTube semantic search completed", result_count=len(ordered))
         return SearchResult(
             videos=ordered,
-            transcript_statuses=transcript_statuses,
             cache=CacheMeta(hit=True, source="cache"),
             quota=await self.client.snapshot(),
-            transcripts=transcripts,
             snippets=snippets,
         )
 
@@ -623,7 +333,7 @@ class YouTubeService:
         )
         async with self.database.transaction() as tx:
             candidates = await tx.fetch_all(statement)
-            states = await fetch_transcript_states(tx, candidates)
+        transcripts = await self.transcriptions.texts_for(candidates)
         videos = [
             video
             for video in candidates
@@ -633,13 +343,7 @@ class YouTubeService:
                     (
                         video.title,
                         video.description,
-                        (
-                            state.text
-                            if isinstance(
-                                state := states.get(video.id), TranscriptAvailable
-                            )
-                            else ""
-                        ),
+                        transcripts.get(video.video_id, ""),
                     )
                 ).casefold()
                 for term in terms
@@ -647,102 +351,12 @@ class YouTubeService:
         ]
         if limit is not None:
             videos = videos[:limit]
-        transcript_statuses, transcripts = _transcript_projections(videos, states)
         _debug(logger, "YouTube search completed", result_count=len(videos))
         return SearchResult(
             videos=videos,
-            transcript_statuses=transcript_statuses,
             cache=CacheMeta(hit=True, source="cache"),
             quota=await self.client.snapshot(),
-            transcripts=transcripts,
         )
-
-    async def fetch_transcript(
-        self, video_id: str, *, logger: Logger
-    ) -> TranscriptRequestResult:
-        """Return a stored transcript or a typed expected request failure."""
-        _debug(logger, "Fetching YouTube transcript", video_id=video_id)
-        video = await self.get_video(video_id)
-        async with self.database.transaction() as tx:
-            state = await fetch_transcript_state(tx, video.id)
-        request_result: TranscriptRequestResult
-        if isinstance(state, TranscriptReviewNeeded):
-            request_result = Err(TranscriptNeedsReview(video_id=video_id))
-        elif state is not None and state.status == "unavailable":
-            request_result = Err(TranscriptExplicitlyUnavailable(video_id=video_id))
-        elif isinstance(state, TranscriptAvailable):
-            request_result = Ok(
-                TranscriptResult(
-                    video=video,
-                    transcript=state.text,
-                    cache=CacheMeta(hit=True, source="cache"),
-                    quota=await self.client.snapshot(),
-                )
-            )
-        elif self.acquisition is None:
-            request_result = Err(TranscriptNeedsReview(video_id=video_id))
-        else:
-            outcome = await self.acquisition.acquire(video_id, now=self.client.now())
-            match outcome:
-                case TranscriptStored(text=text):
-                    _info(logger, "YouTube transcript fetched", video_id=video_id)
-                    request_result = Ok(
-                        TranscriptResult(
-                            video=await self.get_video(video_id),
-                            transcript=text,
-                            cache=CacheMeta(hit=False, source="live"),
-                            quota=await self.client.snapshot(),
-                        )
-                    )
-                case (
-                    TranscriptNeedsReview()
-                    | TranscriptProviderBlocked()
-                    | TranscriptRetryScheduled()
-                    | TranscriptAcquisitionDeferred()
-                ) as failure:
-                    request_result = Err(failure)
-        return request_result
-
-    async def ignore(self, video_id: str, *, logger: Logger) -> IngestedVideo[Fetched]:
-        """Purge a video from ingestion so browse/search no longer surface it."""
-        _debug(logger, "Ignoring YouTube video", video_id=video_id)
-
-        async def _ignore(tx: Transaction) -> IngestedVideo[Fetched]:
-            _ = await self._fetch(tx, video_id)
-            _ = await tx.execute(
-                update(IngestedVideo)
-                .set(IngestedVideo.ignored_at.to(CurrentTimestamp))
-                .set(IngestedVideo.updated_at.to(CurrentTimestamp))
-                .where(IngestedVideo.video_id.eq(VideoId(video_id)))
-                .where(IngestedVideo.ignored_at.is_null())
-            )
-            return await self._fetch(tx, video_id)
-
-        async with self.database.transaction(mode="immediate") as tx:
-            video = await _ignore(tx)
-        _info(logger, "YouTube video ignored", video_id=video_id)
-        await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
-        return video
-
-    async def retry(self, video_id: str, *, logger: Logger) -> IngestedVideo[Fetched]:
-        """Un-ignore a previously purged video, returning it to ingestion."""
-        _debug(logger, "Retrying YouTube video", video_id=video_id)
-
-        async def _retry(tx: Transaction) -> IngestedVideo[Fetched]:
-            _ = await self._fetch(tx, video_id)
-            _ = await tx.execute(
-                update(IngestedVideo)
-                .set(IngestedVideo.ignored_at.to(None))
-                .set(IngestedVideo.updated_at.to(CurrentTimestamp))
-                .where(IngestedVideo.video_id.eq(VideoId(video_id)))
-            )
-            return await self._fetch(tx, video_id)
-
-        async with self.database.transaction(mode="immediate") as tx:
-            video = await _retry(tx)
-        _info(logger, "YouTube video retried", video_id=video_id)
-        await self.event_publisher.publish(InvalidateEvent(keys=["youtube"]))
-        return video
 
     async def get_video(self, video_id: str) -> IngestedVideo[Fetched]:
         """Fetch one ingested video by its upstream id, or raise when absent."""

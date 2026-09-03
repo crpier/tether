@@ -40,14 +40,10 @@ from urllib.parse import unquote
 from snekql.sqlite import Database, Fetched, Transaction, insert, select
 
 from tether.structured_logging import Logger
+from tether.transcripts import TranscriptionAvailable, TranscriptionStore
 from tether.youtube.quota import RawYouTubeVideo
-from tether.youtube.store import (
-    IngestedVideo,
-    TranscriptAvailable,
-    fetch_transcript_state,
-    upsert_ingested_video,
-    write_transcript_available,
-)
+from tether.youtube.store import IngestedVideo, upsert_ingested_video
+from tether.youtube.transcription import youtube_transcription_target
 from tether.youtube.types import VideoId
 
 _DEFAULT_TOPIC = "youtube"
@@ -256,37 +252,41 @@ async def _import_likes(
 
 
 async def _import_transcripts(
-    tx: Transaction,
+    database: Database,
     reader: LikesBackupReader,
     *,
     dry_run: bool,
     planned_ids: set[str],
 ) -> tuple[int, int, int]:
-    """Attach transcripts; returns (orphans, transcripts_imported, skipped)."""
+    """Import independent Transcripts and create sparse YouTube rows for orphans."""
     orphans = 0
     transcripts_imported = 0
     skipped = 0
+    transcriptions = TranscriptionStore(database)
     for transcript in reader.transcripts():
         if not transcript.video_id or not transcript.transcript.strip():
             skipped += 1
             continue
-        existing = await _fetch_video(tx, transcript.video_id)
+        async with database.transaction() as transaction:
+            existing = await _fetch_video(transaction, transcript.video_id)
         if existing is None and transcript.video_id not in planned_ids:
             orphans += 1
-            transcripts_imported += 1
             planned_ids.add(transcript.video_id)
             if not dry_run:
-                await _insert_orphan_video(tx, transcript)
-            continue
-        if existing is not None and isinstance(
-            await fetch_transcript_state(tx, existing.id), TranscriptAvailable
-        ):
-            # A richer existing transcript must not be clobbered; the import
-            # is additive, so an already-stored transcript wins.
+                async with database.transaction(mode="immediate") as transaction:
+                    await _insert_orphan_video(transaction, transcript)
+        target = youtube_transcription_target(VideoId(transcript.video_id))
+        state = await transcriptions.read(target.key)
+        if isinstance(state, TranscriptionAvailable):
             continue
         transcripts_imported += 1
         if not dry_run:
-            await _attach_transcript(tx, transcript)
+            await transcriptions.save_available(
+                target.key,
+                source=None,
+                text=transcript.transcript,
+                segments=(),
+            )
     return orphans, transcripts_imported, skipped
 
 
@@ -312,31 +312,19 @@ async def import_backup(
     # writes nothing) classifies transcripts exactly as a real run would.
     planned_ids: set[str] = set()
 
-    async def _import(tx: Transaction) -> tuple[int, int, int, int, int, int]:
+    async with database.transaction(mode="immediate") as transaction:
         inserted, updated, likes_skipped = await _import_likes(
-            tx, reader, dry_run=dry_run, planned_ids=planned_ids
+            transaction,
+            reader,
+            dry_run=dry_run,
+            planned_ids=planned_ids,
         )
-        orphans, transcripts_imported, transcript_skipped = await _import_transcripts(
-            tx, reader, dry_run=dry_run, planned_ids=planned_ids
-        )
-        return (
-            inserted,
-            updated,
-            likes_skipped,
-            orphans,
-            transcripts_imported,
-            transcript_skipped,
-        )
-
-    async with database.transaction(mode="immediate") as tx:
-        (
-            inserted,
-            updated,
-            likes_skipped,
-            orphans,
-            transcripts_imported,
-            transcript_skipped,
-        ) = await _import(tx)
+    orphans, transcripts_imported, transcript_skipped = await _import_transcripts(
+        database,
+        reader,
+        dry_run=dry_run,
+        planned_ids=planned_ids,
+    )
 
     report = ImportReport(
         videos_inserted=inserted,
@@ -370,7 +358,7 @@ async def _fetch_video(tx: Transaction, video_id: str) -> IngestedVideo[Fetched]
 
 async def _insert_orphan_video(tx: Transaction, transcript: BackupTranscript) -> None:
     """Mint a sparse ingested video for a transcript with no liked-list row."""
-    video = await tx.execute(
+    await tx.execute(
         insert(
             IngestedVideo(
                 video_id=VideoId(transcript.video_id),
@@ -380,19 +368,7 @@ async def _insert_orphan_video(tx: Transaction, transcript: BackupTranscript) ->
                 topic=_DEFAULT_TOPIC,
                 description="",
             )
-        ).returning()
-    )
-    await write_transcript_available(
-        tx, video.id, text=transcript.transcript, segments=()
-    )
-
-
-async def _attach_transcript(tx: Transaction, transcript: BackupTranscript) -> None:
-    video = await _fetch_video(tx, transcript.video_id)
-    if video is None:
-        return
-    await write_transcript_available(
-        tx, video.id, text=transcript.transcript, segments=()
+        )
     )
 
 

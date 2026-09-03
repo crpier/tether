@@ -152,7 +152,7 @@ type _SupadataPollingResult = Result[
 class SupadataTransport(Protocol):
     """The typed Supadata HTTP boundary driven by the transcript provider."""
 
-    async def submit(self, video_id: str) -> SupadataSubmitResult:
+    async def submit(self, locator: str, /) -> SupadataSubmitResult:
         """Request an immediate transcript or an asynchronous job."""
         ...
 
@@ -253,7 +253,7 @@ def _extract_transcript(
             for cue in transcript.content
         )
     if not cleaned:
-        return Err(TranscriptUnavailableFailure(video_id=video_id))
+        return Err(TranscriptUnavailableFailure(locator=video_id))
     return Ok(FetchedTranscript(text=cleaned, source=_SOURCE, segments=segments))
 
 
@@ -284,7 +284,7 @@ def _classify_failure(
             source=_SOURCE,
         )
     if _is_unavailable(response):
-        return TranscriptUnavailableFailure(video_id=video_id)
+        return TranscriptUnavailableFailure(locator=video_id)
     return TranscriptTransientFailure(
         f"supadata {response.operation} for {video_id} failed (status {response.status_code})"
     )
@@ -320,7 +320,7 @@ def _classify_job_failure(
             source=_SOURCE,
         )
     if error_code in _UNAVAILABLE_ERROR_CODES:
-        return TranscriptUnavailableFailure(video_id=video_id)
+        return TranscriptUnavailableFailure(locator=video_id)
     return TranscriptTransientFailure(
         f"supadata job for {video_id} failed ({failure.error.code})"
     )
@@ -402,7 +402,7 @@ class SupadataTranscriptSource:
 
         A completed job's content becomes the transcript; a failed or empty job is
         *unavailable*; a rate limit while polling is *blocked*; and a job still
-        pending after the attempt budget is *transient* (retried per-video next
+        pending after the attempt budget is *transient* (retried per target next
         pass) rather than hanging the worker.
         """
         polling: _SupadataPollingResult = Ok(None)
@@ -522,10 +522,10 @@ class HttpSupadataTransport:
             transport=http_transport,
         )
 
-    async def submit(self, video_id: str) -> SupadataSubmitResult:
+    async def submit(self, locator: str) -> SupadataSubmitResult:
         """Submit and decode either a direct transcript or accepted job."""
         params = {
-            "url": f"https://www.youtube.com/watch?v={video_id}",
+            "url": locator,
             "mode": "native",
         }
         if self._config.languages:

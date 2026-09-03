@@ -41,7 +41,7 @@ class ClosableSource(ScriptedSource):
     def __init__(self, source: str) -> None:
         super().__init__(
             source,
-            [Err(TranscriptUnavailableFailure(video_id="video"))],
+            [Err(TranscriptUnavailableFailure(locator="video"))],
         )
         self.closed: bool = False
 
@@ -54,7 +54,7 @@ async def unavailable_primary_falls_through_in_fixed_order() -> None:
     """The next source runs only after permanent unavailability."""
     primary = ScriptedSource(
         "supadata",
-        [Err(TranscriptUnavailableFailure(video_id="video"))],
+        [Err(TranscriptUnavailableFailure(locator="video"))],
     )
     library = ScriptedSource(
         "youtube_transcript_api",
@@ -101,7 +101,7 @@ async def paused_source_is_deferred_after_reachable_sources_fail() -> None:
     """An untried paused source keeps absence unsettled for a later pass."""
     primary = ScriptedSource(
         "supadata",
-        [Err(TranscriptUnavailableFailure(video_id="video"))],
+        [Err(TranscriptUnavailableFailure(locator="video"))],
     )
     library = ScriptedSource(
         "youtube_transcript_api",

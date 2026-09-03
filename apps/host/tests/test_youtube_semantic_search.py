@@ -18,18 +18,14 @@ from snekql.sqlite import Config, CurrentTimestamp, Database, insert, update
 from snektest import assert_eq, fixture, load_fixture, test
 
 from tether.structured_logging import Logger
-from tether.youtube import YouTubeService
+from tether.youtube import YouTubeService, YouTubeTranscriptionService
 from tether.youtube.local import InMemoryYouTubeApi
 from tether.youtube.quota import (
     DailyQuota,
     YouTubeApiClient,
 )
 from tether.youtube.search import VideoMatch
-from tether.youtube.store import (
-    IngestedVideo,
-    create_youtube_schema,
-    write_transcript_available,
-)
+from tether.youtube.store import IngestedVideo, create_youtube_schema
 from tether.youtube.types import VideoId
 
 
@@ -58,6 +54,7 @@ class StubYouTubeSearch:
 class Env:
     db: Database
     client: YouTubeApiClient
+    transcriptions: YouTubeTranscriptionService
 
 
 @fixture
@@ -65,7 +62,12 @@ async def make_env() -> AsyncGenerator[Env]:
     db = await Database.initialize(backend=Config(database=":memory:"))
     await create_youtube_schema(db)
     client = YouTubeApiClient(InMemoryYouTubeApi(), DailyQuota(db, limit=1000))
-    yield Env(db=db, client=client)
+    transcriptions = YouTubeTranscriptionService(
+        database=db,
+        clock=client,
+        tracer=_tracer(),
+    )
+    yield Env(db=db, client=client, transcriptions=transcriptions)
     await db.close()
 
 
@@ -87,7 +89,6 @@ async def _add_video(db: Database, video_id: str, *, ignored: bool = False) -> N
                 )
             ).returning()
         )
-        await write_transcript_available(tx, created.id, text="body", segments=())
         if ignored:
             _ = await tx.execute(
                 update(IngestedVideo)
@@ -111,6 +112,7 @@ async def semantic_search_orders_by_match_and_attaches_snippets() -> None:
         database=env.db,
         client=env.client,
         tracer=_tracer(),
+        transcriptions=env.transcriptions,
         youtube_search=searcher,
     )
 
@@ -137,6 +139,7 @@ async def semantic_search_drops_matches_for_ignored_videos() -> None:
         database=env.db,
         client=env.client,
         tracer=_tracer(),
+        transcriptions=env.transcriptions,
         youtube_search=searcher,
     )
 
@@ -154,6 +157,7 @@ async def no_matches_returns_an_empty_result() -> None:
         database=env.db,
         client=env.client,
         tracer=_tracer(),
+        transcriptions=env.transcriptions,
         youtube_search=StubYouTubeSearch([]),
     )
 

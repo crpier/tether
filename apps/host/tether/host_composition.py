@@ -45,7 +45,7 @@ from tether.ingestion_composition import (
 from tether.search_projection.embeddings import Embedder
 from tether.service_composition import CoreServices, compose_core_services
 from tether.telemetry_model import TelemetrySettings
-from tether.transcripts.contracts import AsyncClosable
+from tether.transcripts import AsyncClosable
 
 
 class ServingReadyMiddleware:
@@ -191,6 +191,7 @@ async def _compose_app_runtime(
             vapid_public_key=dependencies.config.vapid_public_key,
             youtube_auth_service=youtube.auth_service,
             youtube_service=youtube.service,
+            youtube_transcription_service=youtube.transcription_service,
         ),
     )
     _ = host.background_runtime.register_periodic(

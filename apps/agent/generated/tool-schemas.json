@@ -608,40 +608,6 @@
       }
     },
     {
-      "endpoint": "/internal/tools/ignore_youtube_video",
-      "name": "ignore_youtube_video",
-      "params_model": "IgnoreYouTubeVideoParams",
-      "schema": {
-        "description": "Params for purging a video from ingestion.",
-        "properties": {
-          "video_id": {
-            "title": "Video Id",
-            "type": "string"
-          }
-        },
-        "required": ["video_id"],
-        "title": "IgnoreYouTubeVideoParams",
-        "type": "object"
-      }
-    },
-    {
-      "endpoint": "/internal/tools/retry_youtube_video",
-      "name": "retry_youtube_video",
-      "params_model": "RetryYouTubeVideoParams",
-      "schema": {
-        "description": "Params for returning a previously purged video to ingestion.",
-        "properties": {
-          "video_id": {
-            "title": "Video Id",
-            "type": "string"
-          }
-        },
-        "required": ["video_id"],
-        "title": "RetryYouTubeVideoParams",
-        "type": "object"
-      }
-    },
-    {
       "endpoint": "/internal/tools/web_search",
       "name": "web_search",
       "params_model": "WebSearchParams",

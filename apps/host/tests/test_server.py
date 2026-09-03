@@ -580,8 +580,8 @@ def app_lifespan_closes_transcript_provider_resources() -> None:
         def __init__(self) -> None:
             self.close_calls: int = 0
 
-        async def fetch(self, video_id: str) -> TranscriptFetchResult:
-            return Err(TranscriptUnavailableFailure(video_id=video_id))
+        async def fetch(self, locator: str) -> TranscriptFetchResult:
+            return Err(TranscriptUnavailableFailure(locator=locator))
 
         async def aclose(self) -> None:
             self.close_calls += 1
@@ -695,8 +695,8 @@ def failed_app_startup_closes_transcript_provider_resources() -> None:
         def __init__(self) -> None:
             self.close_calls: int = 0
 
-        async def fetch(self, video_id: str) -> TranscriptFetchResult:
-            return Err(TranscriptUnavailableFailure(video_id=video_id))
+        async def fetch(self, locator: str) -> TranscriptFetchResult:
+            return Err(TranscriptUnavailableFailure(locator=locator))
 
         async def aclose(self) -> None:
             self.close_calls += 1

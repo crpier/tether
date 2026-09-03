@@ -9,7 +9,7 @@ makes the bounded async-job polling resolve instantly. Covered: a direct hit
 its retry-after and source, the async job model (pending then complete), a failed
 job -> *unavailable*, an over-budget poll -> *transient*, and the transport's
 key/`Retry-After` handling. The flag/key gating is asserted against the
-`tether.transcripts.source_composition` wiring helpers.
+the YouTube transcript-source wiring helpers.
 """
 
 from __future__ import annotations
@@ -246,7 +246,7 @@ async def http_transport_decodes_an_accepted_job() -> None:
 
 @test()
 async def http_transport_submit_sends_configured_parameters() -> None:
-    """Submit sends the canonical video URL, native mode, and preferred language."""
+    """Submit preserves the media locator and sends configured provider options."""
     requests: list[httpx2.Request] = []
 
     def respond(request: httpx2.Request) -> httpx2.Response:
@@ -259,11 +259,11 @@ async def http_transport_submit_sends_configured_parameters() -> None:
         http_transport=httpx2.MockTransport(respond),
     )
 
-    _ = await transport.submit("v1")
+    _ = await transport.submit("https://media.example/recording/1")
     await transport.aclose()
 
     assert_eq(len(requests), 1)
-    assert_eq(requests[0].url.params["url"], "https://www.youtube.com/watch?v=v1")
+    assert_eq(requests[0].url.params["url"], "https://media.example/recording/1")
     assert_eq(requests[0].url.params["mode"], "native")
     assert_eq(requests[0].url.params["lang"], "ro")
 

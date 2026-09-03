@@ -8,15 +8,16 @@ from datetime import timedelta
 from snekok.types import NonEmptySecretStr
 from snekok.validation import validate_python
 
-from tether.transcripts.contracts import TranscriptProviderChain, TranscriptSource
-from tether.transcripts.library import (
-    TranscriptLibraryConfig,
-    YouTubeTranscriptApiSource,
-)
-from tether.transcripts.supadata import (
+from tether.transcripts import (
     HttpSupadataTransport,
     SupadataConfig,
     SupadataTranscriptSource,
+    TranscriptProviderChain,
+    TranscriptSource,
+)
+from tether.youtube.transcript_library import (
+    TranscriptLibraryConfig,
+    YouTubeTranscriptApiSource,
 )
 
 
