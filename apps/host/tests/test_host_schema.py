@@ -27,7 +27,7 @@ async def host_migration_chain_is_byte_and_order_stable() -> None:
 
     assert_eq(
         hashlib.sha256(encoded).hexdigest(),
-        "9263dcaad90004792f9fb20bbde83be681802c8e506fa53d6756468a8a6825ed",
+        "f514ec1955c0259d737daa4e035e0b502db55704763ac4a685876806a1a5cbf8",
     )
 
 
@@ -39,6 +39,7 @@ async def deployed_legacy_histories_are_exact_prefix_sets() -> None:
         107: "0286795c89a1489edaf9774d3f08dabedb9ecb2189f216e6d055917681375715",
         161: "0d36babf0fa7f110dbfef6e0918c35d5210166bda1c77013619680c2d6e3b83f",
         168: "cda53b047cbf2290ab16e6b6caec3e21c092ce176d14044e6b0323ebd6eaf5d9",
+        179: "be89d7586c203573e2b19f9017c481ad9221528376e818727a00546d6eca230d",
     }
 
     for length, expected_hash in expected_prefixes.items():
@@ -118,7 +119,7 @@ async def existing_proposal_tables_remain_inert_for_rollback() -> None:
 async def observed_legacy_histories_adopt_and_apply_the_pending_suffix() -> None:
     """Every observed name-only history upgrades through the complete chain."""
     migrations = await host_migrations()
-    for legacy_length in (107, 161, 168):
+    for legacy_length in (107, 161, 168, 179):
         database = await Database.initialize(backend=Config(database=":memory:"))
         await database.migrate(dict(list(migrations.items())[:legacy_length]))
         async with database.transaction(mode="immediate") as transaction:

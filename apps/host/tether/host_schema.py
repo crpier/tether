@@ -208,6 +208,18 @@ _DEPLOYED_LEGACY_MIGRATION_NAMES = (
     "002_email_evidence_snapshot_source_unique",
     "003_create_email_evidence_promotion",
     "004_email_evidence_promotion_source_unique",
+    # Migrations present in the live pre-0.6 history deployed on 2026-08-29.
+    "041_create_ledger_proposal",
+    "041_create_index_ix_ledger_proposal_status_created_at",
+    "041_create_index_ix_ledger_proposal_ledger_id_created_at",
+    "041_create_ledger",
+    "041_create_ledger_revision",
+    "041_create_unique_index_ix_ledger_revision_ledger_revision",
+    "041_create_unique_index_ix_ledger_revision_proposal_id",
+    "041_create_ledger_entry",
+    "041_create_index_ix_ledger_entry_ledger_recorded_at",
+    "041_create_unique_index_ix_ledger_entry_dedupe_key",
+    "041_create_unique_index_ix_ledger_entry_supersedes",
 )
 
 _RETIRED_MIGRATION_NAMES = frozenset(
