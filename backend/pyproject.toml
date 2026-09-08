@@ -1,0 +1,64 @@
+[project]
+name = "tether"
+version = "0.1.0"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "fastapi>=0.141.1",
+    "snekok>=0.1.0",
+    "snekql>=0.7.0",
+    "uvicorn>=0.52.4",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+
+[tool.ruff.lint]
+preview = true
+select = [ "A", "ANN", "ARG", "ASYNC", "B", "BLE", "C4", "C90", "COM", "DTZ", "E", "EM", "ERA", "EXE", "F", "FAST", "FBT", "FURB", "G", "I", "INP", "ISC", "LOG", "N", "PERF", "PGH", "PIE", "PL", "PLE", "PLR", "PLW", "PT", "PTH", "PYI", "Q", "RET", "RSE", "RUF", "S", "SIM", "SLF", "SLOT", "T10", "T20", "TC", "TID", "TRY", "UP", "W" ]
+extend-select = [
+  "DOC",                                      # For docstrings. Requires "preview" to be enabled.
+  # Select only some of the `TD` rules.
+  "missing-todo-colon",                       # Check for colon after "TODO" keyword.
+  "missing-todo-description",                 # Check for description.
+  "invalid-todo-capitalization",              # Check for proper capitalization.
+  "missing-space-after-todo-colon",           # Check for missing space after colon.
+]
+ignore = [
+  "any-type",                                 # Allow the use of `typing.Any`.
+  "blind-except",                             # Allow using blind except (e.g. `except Exception`).
+  "missing-trailing-comma",                   # Don't require trailing commas. Ignored because it may interfere with formatting.
+  "docstring-missing-returns",                # Don't make me document return values.
+  "line-too-long",                            # Allow long lines. Useful mostly for writing log and error messages: having them in a single line makes it easier to search for the message. Note that the formatter will still try to shorten line length whenever possible.
+  "compare-to-empty-string",                  # Allow comparing with empty strings. This is needed when the variable could be another falsy value, like `None`.
+  "bad-dunder-method-name",                   # Let me create dunder methods
+  "os-path-exists",                           # Allow using `os.path.exists`. Removed because Path.exists is 4 times slower.
+  "suspicious-non-cryptographic-random-usage",# Allow pseudo-random generators.
+  "print",                                    # Allow `print` statements. Useful mostly for debugging.
+  "typing-only-first-party-import",           # Don't suggest putting imports in `TYPE_CHECKING` blocks. Mostly makes sense for Python>=3.11.
+  "typing-only-third-party-import",           # Don't suggest putting third party imports in `TYPE_CHECKING` blocks. Mostly makes sense for Python>=3.11.
+  "typing-only-standard-library-import",      # Don't suggest putting stdlib imports in `TYPE_CHECKING` blocks. Mostly makes sense for Python>=3.11.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+  "invalid-function-name",                    # Don't force function names to be snake_case. Useful e.g. when writing tests for classes.
+  "invalid-module-name",                      # Don't force module names to be snake_case. Useful e.g. when writing tests for classes.
+  "magic-value-comparison",                   # Allow magic numbers.
+  "assert",                                   # Allow use of assert.
+  "hardcoded-password-string",                # Allow hardcoded password strings.
+  "hardcoded-password-func-arg",              # Allow hardcoded password strings.
+  "hardcoded-password-default",               # Allow hardcoded password strings.
+  "hardcoded-sql-expression",                 # Allow string building with SQL.
+  "private-member-access",                    # Allow private member access.
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.6",
+    "snektest>=0.16.0",
+    "ty>=0.0.79",
+]

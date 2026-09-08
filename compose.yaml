@@ -1,0 +1,15 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./backend/tether:/app/tether:ro
+    command:
+      - python
+      - tether/main.py
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
