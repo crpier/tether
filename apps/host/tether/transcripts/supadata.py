@@ -19,7 +19,7 @@ from pydantic import (
     ValidationError,
 )
 from snekok.result import Err, Ok, Result
-from snekok.types import NonBlankStr, NonEmptySecretStr, NonNegativeInt
+from snekok.types import NonBlankStr, NonEmptySecretStr
 
 from tether.transcripts.contracts import (
     AsyncClosable,
@@ -27,6 +27,7 @@ from tether.transcripts.contracts import (
     TranscriptBlockedFailure,
     TranscriptFailure,
     TranscriptFetchResult,
+    TranscriptMilliseconds,
     TranscriptSegment,
     TranscriptTransientFailure,
     TranscriptUnavailableFailure,
@@ -60,8 +61,8 @@ class SupadataCue(_SupadataPayload):
     """One validated timed transcript cue from Supadata."""
 
     text: NonBlankStr
-    offset: NonNegativeInt
-    duration: NonNegativeInt
+    offset: TranscriptMilliseconds
+    duration: TranscriptMilliseconds
     lang: str | None = None
 
 
