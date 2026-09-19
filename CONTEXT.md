@@ -155,7 +155,7 @@ The acquisition state of a Transcription: pending, retrying, needs review, avail
 _Avoid_: Transcript status, terminal, caption state, transcript error
 
 **Transcript segment**:
-One provider-reported timed cue stored with integer millisecond start and duration. Duration is exact upstream data, never inferred from the next cue. A text-only Transcript has no Transcript segments.
+One provider-reported timed cue with a start and duration in milliseconds, including fractional milliseconds. Duration is exact upstream data, never inferred from the next cue. A text-only Transcript has no Transcript segments.
 _Avoid_: estimated cue, sentence timestamp, inferred duration
 
 **Telemetry**:

@@ -5,8 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import NewType, Protocol, runtime_checkable
+from typing import Annotated, NewType, Protocol, runtime_checkable
 
+from pydantic import Field
 from snekok.result import Err, Ok, Result
 from snekok.types import (
     NonBlankStr,
@@ -278,14 +279,20 @@ class TranscriptAcquisitionPort(Protocol):
         ...
 
 
+type TranscriptMilliseconds = (
+    NonNegativeInt | Annotated[float, Field(strict=True, ge=0, allow_inf_nan=False)]
+)
+"""Finite nonnegative provider timing, retaining fractional milliseconds."""
+
+
 class TranscriptSegment(StrictFrozenModel):
     """One exact provider-reported timed transcript segment."""
 
     text: NonBlankStr
-    start_ms: NonNegativeInt
-    duration_ms: NonNegativeInt
+    start_ms: TranscriptMilliseconds
+    duration_ms: TranscriptMilliseconds
 
     @property
-    def end_ms(self) -> int:
-        """Return the exclusive segment end in integer milliseconds."""
+    def end_ms(self) -> int | float:
+        """Return the exclusive segment end in milliseconds without rounding."""
         return self.start_ms + self.duration_ms

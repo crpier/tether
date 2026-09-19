@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from snekok.validation import validate_python_unsafe
 from snekql.sqlite import Config, Database
 from snektest import (
+    Param,
     assert_eq,
     assert_is_none,
     assert_isinstance,
@@ -143,5 +144,56 @@ async def restarted_transcription_returns_to_pending() -> None:
     )
 
     await store.restart(key)
+
+    assert_is_none(await store.read(key))
+
+
+@test()
+async def transcript_storage_preserves_fractional_milliseconds() -> None:
+    """Timed cues retain sub-millisecond precision through JSON persistence."""
+    database = await load_fixture(transcript_database())
+    store = TranscriptionStore(database)
+    key = TranscriptionKey("recording:fractional")
+    segment = validate_python_unsafe(
+        TranscriptSegment,
+        {"text": "Hello", "start_ms": 1250.25, "duration_ms": 500.125},
+    )
+
+    await store.save_available(
+        key, source="supadata", text="Hello", segments=(segment,)
+    )
+
+    available = assert_isinstance(await store.read(key), TranscriptionAvailable)
+    saved = available.transcript.segments[0]
+    assert_eq(saved.start_ms, 1250.25)
+    assert_eq(saved.duration_ms, 500.125)
+    assert_eq(saved.end_ms, 1750.375)
+
+
+@test(
+    [Param("start_ms", name="start"), Param("duration_ms", name="duration")],
+    [
+        Param(-0.25, name="negative"),
+        Param(True, name="boolean"),
+        Param("0.25", name="string"),
+        Param(None, name="null"),
+        Param(float("nan"), name="nan"),
+        Param(float("inf"), name="infinity"),
+    ],
+)
+async def transcript_storage_rejects_invalid_timing(field: str, timing: object) -> None:
+    """Persistence validates timing even when callers bypass segment construction."""
+    database = await load_fixture(transcript_database())
+    store = TranscriptionStore(database)
+    key = TranscriptionKey("recording:invalid")
+    segments = ({"text": "hello", "start_ms": 0, "duration_ms": 500, field: timing},)
+
+    with assert_raises(ValidationError):
+        await store.save_available(
+            key,
+            source="supadata",
+            text="hello",
+            segments=segments,  # ty: ignore[invalid-argument-type] deliberate invalid input
+        )
 
     assert_is_none(await store.read(key))

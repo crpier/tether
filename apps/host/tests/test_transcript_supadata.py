@@ -21,7 +21,7 @@ import httpx2
 from snekok.result import Err, Ok, Result
 from snekok.types import NonBlankStr, NonEmptySecretStr, NonNegativeInt
 from snekok.validation import validate_python
-from snektest import assert_eq, assert_is_none, assert_isinstance, test
+from snektest import Param, assert_eq, assert_is_none, assert_isinstance, test
 
 from tether.transcripts.contracts import (
     TranscriptBlockedFailure,
@@ -970,3 +970,101 @@ async def pacing_is_off_when_the_interval_is_zero() -> None:
     _ = await provider.fetch("v2")
 
     assert_eq(clock.sleeps, [])
+
+
+@test()
+async def http_transport_preserves_fractional_milliseconds() -> None:
+    """Supadata can report sub-millisecond cue timing in a direct response."""
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        _ = request
+        return httpx2.Response(
+            200,
+            json={
+                "content": [{"text": "hello", "offset": 1250.25, "duration": 500.125}]
+            },
+        )
+
+    transport = HttpSupadataTransport(
+        _api_key(), http_transport=httpx2.MockTransport(respond)
+    )
+    try:
+        response = await transport.submit("v1")
+    finally:
+        await transport.aclose()
+
+    transcript = assert_isinstance(response.unwrap(), SupadataTranscript)
+    assert not isinstance(transcript.content, str)
+    assert_eq(transcript.content[0].offset, 1250.25)
+    assert_eq(transcript.content[0].duration, 500.125)
+
+
+@test([Param("direct", name="direct"), Param("polled", name="polled")])
+async def source_preserves_fractional_timing_from_http(
+    delivery: str,
+) -> None:
+    """Direct and completed-job HTTP cues reach the source result unrounded."""
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        if delivery == "polled" and request.url.path == "/v1/transcript":
+            return httpx2.Response(202, json={"jobId": "job-1"})
+        return httpx2.Response(
+            200,
+            json={
+                "status": "completed",
+                "content": [{"text": "hello", "offset": 1250.25, "duration": 500.125}],
+            },
+        )
+
+    transport = HttpSupadataTransport(
+        _api_key(), http_transport=httpx2.MockTransport(respond)
+    )
+    try:
+        transcript = (await _provider(transport).fetch("v1")).unwrap()
+    finally:
+        await transport.aclose()
+
+    assert_eq(
+        [(cue.start_ms, cue.duration_ms) for cue in transcript.segments],
+        [(1250.25, 500.125)],
+    )
+
+
+@test(
+    [Param("offset", name="offset"), Param("duration", name="duration")],
+    [
+        Param("-0.25", name="negative"),
+        Param("true", name="boolean"),
+        Param('"0.25"', name="string"),
+        Param("null", name="null"),
+        Param("NaN", name="nan"),
+        Param("Infinity", name="infinity"),
+        Param("-Infinity", name="negative_infinity"),
+    ],
+)
+async def http_transport_rejects_invalid_timing(field: str, encoded: str) -> None:
+    """Accepting fractions does not admit coercions or nonfinite cue timing."""
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        _ = request
+        cue = {"offset": "0", "duration": "500", field: encoded}
+        return httpx2.Response(
+            200,
+            content=(
+                '{"content":[{"text":"hello","offset":'
+                + cue["offset"]
+                + ',"duration":'
+                + cue["duration"]
+                + "}]}"
+            ),
+        )
+
+    transport = HttpSupadataTransport(
+        _api_key(), http_transport=httpx2.MockTransport(respond)
+    )
+    try:
+        response = await transport.submit("v1")
+    finally:
+        await transport.aclose()
+
+    assert_eq(response, Err(SupadataProtocolFailure(operation="submit")))
